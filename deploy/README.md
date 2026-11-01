@@ -15,6 +15,12 @@ Caddy for TLS. Target domain: **example.com**.
 > has none) and prevout values present. So the indexer's core assumption holds on
 > this build; the remaining unknowns are operational, not about the RPC.
 
+> **Already running an older deployment?** These steps describe a fresh box.
+> Converting a live signet deployment is a different sequence with a different
+> ordering — see [Migrating an existing signet deployment to
+> ECX](#migrating-an-existing-signet-deployment-to-ecx) at the end. The site can
+> keep serving throughout, but only if you do it in that order.
+
 ## What runs here, and what doesn't
 
 The app makes exactly four JSON-RPC calls — `getblockchaininfo`,
@@ -547,3 +553,103 @@ systemctl start ecashmeter-index.timer
 The DB is a disposable derived cache; backing it up is optional. Rebuilding
 re-fetches the backfill range from the node, which on mainnet is minutes rather
 than instant — and it cannot reach further back than the node's prune horizon.
+
+
+---
+
+# Migrating an existing signet deployment to ECX
+
+The steps above describe a fresh box. Converting a *running* deployment is a
+different sequence, and the ordering matters more than any individual command.
+
+**The key fact that makes this nearly seamless:** the web app only ever reads
+SQLite. It never contacts a node. So the existing site keeps serving its current
+data, uninterrupted, for the days the new node spends syncing — provided you
+leave the old node and indexer alone until the very end.
+
+**The signet chain is tiny** (tens of MB) while a pruned ECX node is ~55 GB, so
+both nodes fit on one 80 GB disk at the same time. That is what buys the
+near-zero downtime. Check the arithmetic for your own box before relying on it,
+and drop `prune` to `30000` if it is close.
+
+## Three things that will bite you
+
+1. **Do not deploy the new code while the old store is still the live one.**
+   This codebase is ECX-only: the page header is hardcoded to `LIVE · ECX
+   MAINNET`. Pointed at a signet store it would present signet data under an ECX
+   label — wrong in the way that matters most for a site whose whole purpose is
+   accurate reporting. `/api/health` would also return 503 `chain-mismatch`,
+   because the store carries no ECX fork-block stamp. **Code and store switch
+   together, last.**
+2. **The indexer refuses to run below the fork.** Until the ECX node passes
+   973,728 it reports "node is at height N, below the ECX fork" and stops. Do not
+   mistake that for a failure; it is the identity guard.
+3. **Archive the old store before you delete it.** Once you are on ECX-only
+   code, the signet history is not readable or rebuildable by this codebase at
+   all. If those months of commitments are worth keeping, copy the file off the
+   box — it is the only copy.
+
+## Sequence
+
+**1. Add the ECX node alongside the existing one.** Do not touch the signet
+node, the indexer timer, or the app. Install the eCash binary (step 3), put
+`ecash.conf` at `/etc/ecash/ecash.conf` with its own datadir and `rpcauth`
+(step 4), add `ecash-node.service`, and start it (step 5). The site carries on
+serving signet throughout.
+
+**2. Wait days.** Watch `verificationprogress`, not `blocks`. Meanwhile the
+signet node and indexer keep the live site fresh.
+
+**3. When the ECX node clears 973,728, rehearse into a separate store.** Use a
+distinct `ECASH_METER_DB` path so the live signet store is untouched:
+
+```bash
+sudo -u ecashmeter env \
+  ECASH_SOURCE=db \
+  ECASH_METER_DB=/var/lib/ecashmeter/ecx.sqlite \
+  ECASH_RPC_URL=http://127.0.0.1:8532 \
+  ECASH_RPC_USER=ecashmeter ECASH_RPC_PASS=... \
+  npm run index
+```
+
+Run the step 0 checks against `ecx.sqlite`. If anything disagrees with a block
+explorer, stop — the live site is still fine, and you have lost nothing.
+
+**4. Cut over.** Only now:
+
+```bash
+cp /var/lib/ecashmeter/ecash-meter.sqlite /root/signet-archive.sqlite   # keep it
+systemctl stop ecashmeter-index.timer                                    # old indexer off
+
+cd /srv/ecashmeter && sudo -u ecashmeter git pull
+sudo -u ecashmeter npm ci --include=dev && sudo -u ecashmeter npm run build
+
+# point both env files at the ECX store and the ECX node
+sed -i 's#ecash-meter.sqlite#ecx.sqlite#' /etc/ecashmeter/site.env /etc/ecashmeter/indexer.env
+sed -i 's#127.0.0.1:38332#127.0.0.1:8532#' /etc/ecashmeter/indexer.env
+
+systemctl restart ecashmeter
+systemctl start ecashmeter-index.timer
+curl -s https://example.com/api/health | python3 -m json.tool
+```
+
+Health must show `"network": "ecx"`, `"status": "ok"`, and `chain.stored` equal
+to `chain.expected`. Downtime is one `next start`, a few seconds.
+
+**5. Remove signet.** Once ECX has been serving happily for a day:
+
+```bash
+systemctl disable --now bitcoind        # the old signet unit, whatever it is called
+rm -rf /var/lib/bitcoind /etc/bitcoin
+rm /var/lib/ecashmeter/ecash-meter.sqlite*   # archived in step 4
+```
+
+That reclaims the disk and leaves one node on the box.
+
+## Rolling back
+
+Until step 4 there is nothing to roll back — the live site never changed. After
+step 4, `git checkout` the previous commit, point the env files back at the
+signet store and node, rebuild, and restart. This is the reason step 4 archives
+the old store rather than deleting it, and the reason signet is not removed until
+a day later.
