@@ -1,7 +1,7 @@
 // Core domain types for eCash Meter.
 //
-// The unit of account is satoshis of the L1 (mainchain) coin. eCash is a 1:1
-// Bitcoin hard fork, so the mainchain coin uses 8-decimal (sat) precision.
+// The unit of account is satoshis of the L1 (mainchain) coin. eCash (ECX) is a
+// 1:1 Bitcoin hard fork, so the mainchain coin uses 8-decimal (sat) precision.
 //
 // Under BIP 301 (blind merged mining), a sidechain's block is committed on L1
 // by a "BMM bid" transaction whose fee is paid to the L1 miner. Summing those
@@ -53,11 +53,11 @@ export interface DrivechainStats {
   feesLast24hSats: number;
   /**
    * BMM commitments over the window = blocks this sidechain was merge-mined
-   * into (one coinbase h* commitment per block). This is the live, real signal
-   * on the L2L signet even when fee bids are absent.
+   * into (one coinbase h* commitment per block). This is the real signal even
+   * on a stretch of chain where no bid paid a fee.
    */
   bmmCommitments: number;
-  /** Number of fee-paying BMM bid txs identified (≈0 on orchestrator signets). */
+  /** Number of fee-paying BMM bid txs identified. */
   bmmBidCount: number;
   /** Average bid size, in sats (0 when no paid bids). */
   avgBidSats: number;
@@ -69,12 +69,15 @@ export interface DrivechainStats {
 
 /** Everything the dashboard needs, as returned by the data layer. */
 export interface DashboardData {
-  /** Network the data came from. */
-  network: "mainnet" | "testnet" | "signet" | "mock";
+  /**
+   * Where the data came from. "ecx" is eCash mainnet — the only chain this
+   * project indexes; "mock" is the deterministic placeholder dataset.
+   */
+  network: "ecx" | "mock";
   /**
    * Which metric is the meaningful headline for this dataset:
-   *  - "fees": fees fed to L1 (mock, and any fee-active network)
-   *  - "bmm":  BMM commitment activity (live signet, where fees are ~0)
+   *  - "fees": fees fed to L1 (any window containing a paid BMM bid)
+   *  - "bmm":  BMM commitment activity (window with commitments but no paid bids)
    */
   metric: "fees" | "bmm";
   /** Latest L1 block height reflected in this snapshot. */
@@ -93,6 +96,6 @@ export interface DashboardData {
    * freshness and flag a stale indexer instead of presenting old data as current.
    */
   lastBlockTime?: number;
-  /** Optional human note (e.g. why fees are ~0 on this network). */
+  /** Optional human note (e.g. why fees read 0 for this window). */
   note?: string;
 }

@@ -122,9 +122,7 @@ export default async function Home() {
                   network === "mock" ? "bg-amber-400" : "bg-brand"
                 }`}
               />
-              {network === "mock"
-                ? "MOCK DATA"
-                : `LIVE · ${network.toUpperCase()}`}
+              {network === "mock" ? "MOCK DATA" : "LIVE · ECX MAINNET"}
             </span>
             <span className="rounded-full bg-white/[0.06] px-3 py-1.5 text-neutral-400 ring-1 ring-white/10">
               tip #{formatInt(tipHeight)}
@@ -316,7 +314,7 @@ export default async function Home() {
           <p className="text-center text-xs text-neutral-600">
             {network === "mock"
               ? "Mockup with placeholder data · numbers are illustrative until wired to a live eCash node."
-              : `Live from ${network} · scanned ${formatInt(
+              : `Live from eCash (ECX) mainnet · scanned ${formatInt(
                   blocksScanned,
                 )} blocks up to tip #${formatInt(tipHeight)}.`}
           </p>

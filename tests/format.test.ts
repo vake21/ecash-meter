@@ -1,11 +1,17 @@
 // Fee amounts are rendered in coin units, which silently rounds satoshi-scale
-// totals to "0.00 BTC". `feeFormatter` picks the unit from the largest value in
-// a set so small amounts survive display. Regression case: the L2L-Signet store
-// held 378 sats total, which made every chart gridline read "0 BTC" beside
-// full-height bars.
+// totals to "0.00 ECX". `feeFormatter` picks the unit from the largest value in
+// a set so small amounts survive display. Regression case: a store holding just
+// 378 sats in total made every chart gridline read "0 ECX" beside full-height
+// bars. Real bids are this small — the first paid bids observed on a live
+// drivechain were 378 and 564 sats — so this is the normal case, not an edge.
+//
+// Assertions compare against L1_SYMBOL rather than a hardcoded ticker, so
+// renaming the coin can't quietly turn these into no-ops.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SATS_PER_COIN } from "../lib/config";
+import { L1_SYMBOL, SATS_PER_COIN } from "../lib/config";
+
+const SYM = new RegExp(`${L1_SYMBOL}$`);
 import {
   feeFormatter,
   formatCoins,
@@ -21,17 +27,17 @@ test("satoshi-scale totals format as sats, not 0.00 coins", () => {
   assert.equal(f(378), "378 sats");
   assert.equal(f(189), "189 sats");
   // The bug this guards: coin display erases the amount entirely.
-  assert.equal(formatCoinsCompact(378), "0 BTC");
+  assert.equal(formatCoinsCompact(378), `0 ${L1_SYMBOL}`);
 });
 
 test("totals at or above the threshold format as coins", () => {
   const f = feeFormatter(SATS_PER_COIN);
-  assert.match(f(SATS_PER_COIN), /BTC$/);
+  assert.match(f(SATS_PER_COIN), SYM);
   assert.doesNotMatch(f(SATS_PER_COIN), /sats$/);
 });
 
 test("threshold boundary: at the cutoff uses coins, just below uses sats", () => {
-  assert.match(feeFormatter(THRESHOLD)(THRESHOLD), /BTC$/);
+  assert.match(feeFormatter(THRESHOLD)(THRESHOLD), SYM);
   assert.match(feeFormatter(THRESHOLD - 1)(THRESHOLD - 1), /sats$/);
 });
 
@@ -40,7 +46,7 @@ test("the unit is chosen from the reference max, not the value formatted", () =>
   // mixes units.
   assert.equal(feeFormatter(378)(0), "0 sats");
   // ...and a small row inside a coin-scale set stays in coins.
-  assert.match(feeFormatter(SATS_PER_COIN)(1), /BTC$/);
+  assert.match(feeFormatter(SATS_PER_COIN)(1), SYM);
 });
 
 test("an all-zero set formats as sats rather than 0.00 coins", () => {
@@ -49,7 +55,7 @@ test("an all-zero set formats as sats rather than 0.00 coins", () => {
 
 test("caller can supply the coin formatter used above the threshold", () => {
   const f = feeFormatter(SATS_PER_COIN, (s) => formatCoins(s, 2));
-  assert.equal(f(SATS_PER_COIN), "1.00 BTC");
+  assert.equal(f(SATS_PER_COIN), `1.00 ${L1_SYMBOL}`);
 });
 
 test("fractional sats round to whole numbers", () => {

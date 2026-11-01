@@ -1,22 +1,23 @@
 # Deploying eCash Meter to a single VPS
 
-Everything runs on one small box: `bitcoind`, the indexer, the Next.js app, and
+Everything runs on one box: the eCash node, the indexer, the Next.js app, and
 Caddy for TLS. Target domain: **example.com**.
 
-## Why a VPS, and why not BitWindow
+> **Status.** The unit files, Caddy config, hardening and app deployment steps
+> below were verified end to end on a real box. The **eCash mainnet node steps
+> (3 and 5) have not been** — the previous deployment ran a different, far
+> smaller chain. Treat the disk sizing and the assumeutxo flow as carefully
+> reasoned but unproven, and run the checks in step 5 rather than trusting them.
 
-The app makes exactly four JSON-RPC calls — `getblockchaininfo`, `getblockcount`,
-`getblockhash`, `getblock` (verbosity 3) — all stock Bitcoin Core. **BitWindow,
-`bip300301-enforcer` and `orchestratord` are not needed on the server.** The
-enforcer's only contribution was the 8-slot sidechain registry, which is
-hardcoded in `lib/config.ts`.
+## What runs here, and what doesn't
 
-A VPS is still required because there is no public L2L-Signet RPC endpoint, and
-because the store is a local SQLite file that `lib/store.ts` opens directly — so
-the web process must share a filesystem with it.
+The app makes exactly four JSON-RPC calls — `getblockchaininfo`,
+`getblockcount`, `getblockhash`, `getblock` (verbosity 3). **No wallet, no
+`bip300301-enforcer`, no orchestrator.** The sidechain metadata table is in
+`lib/config.ts`, so nothing needs the enforcer at runtime.
 
 ```
- bitcoind (L2L-Signet, RPC on 127.0.0.1:38332)
+ eCash node (ECX mainnet, RPC on 127.0.0.1:8532)
      │  getblock v3
      ▼
  ecashmeter-index.timer → npm run index → /var/lib/ecashmeter/ecash-meter.sqlite
@@ -29,21 +30,29 @@ the web process must share a filesystem with it.
 ```
 
 The app never contacts the node, so the site keeps serving the last indexed data
-even while bitcoind is down or resyncing.
+even while the node is down or resyncing.
+
+### Why a node at all
+
+eCash publishes public Esplora endpoints (`esplora.ecash.com`,
+`esplora.ecash.ninja`) which do expose per-transaction fees, so a node is not the
+only conceivable source. The indexer speaks Bitcoin JSON-RPC, so running the node
+keeps the data path first-party and unmetered. The store is also a local SQLite
+file that `lib/store.ts` opens directly, so the web process must share a
+filesystem with it either way.
 
 ## Forking this for your own deployment
 
-Nothing in this repository is specific to one machine — there are no IP addresses,
-credentials or keys anywhere in it, and every secret is generated on the server
-during step 4. To run it under your own domain, change these and nothing else:
+There are no IP addresses, credentials or keys anywhere in this repository; every
+secret is generated on the server in step 4. To run it under your own domain,
+change these and nothing else:
 
-1. **Your domain** — `deploy/Caddyfile` (the two site blocks) and the
-   `example.com` references in this file. That is the only place the domain
-   appears; the app itself never hardcodes a hostname.
+1. **Your domain** — `deploy/Caddyfile` (both site blocks) and the
+   `example.com` references here. The app never hardcodes a hostname.
 2. **The clone URL** in step 6, and optionally the `Documentation=` lines in
-   `deploy/systemd/*.service`, to point at your fork.
-3. **Nothing else for signet.** The RPC password, `rpcauth` hash and TLS
-   certificate are all generated fresh on your box.
+   `deploy/systemd/*.service`.
+3. **Nothing else.** The RPC password, `rpcauth` hash and TLS certificate are all
+   generated fresh on your box.
 
 ### Branding assets are not included
 
@@ -84,39 +93,50 @@ mean luminance under ~10% and nothing above ~20% in that central band, or the
 grain — dark gradients band badly in 8-bit, and a CSS background bypasses Next's
 image optimizer.
 
-Two things are *network*-specific rather than deployment-specific, and matter if
-you target something other than L2L-Signet:
+One thing is *chain*-specific rather than deployment-specific:
 
-- `deploy/bitcoin.conf` — `signetchallenge` and `addnode` define which signet you
-  join. A different challenge is a different network, and the indexer will refuse
-  to mix them (it stamps the genesis hash into `meta`).
-- `lib/config.ts` — the 8-slot drivechain registry was read from L2L-Signet's
-  enforcer. Another network's slate may differ; long term this should be queried
-  from `ValidatorService.GetSidechains` rather than hardcoded.
+- `lib/config.ts` holds the sidechain metadata table. ECX's registry entry
+  publishes no slate yet, so the table is the ecosystem's published slot
+  assignments. This does **not** gate what the dashboard shows — unnamed slots
+  render as "Slot N" — it only supplies names and colours. Refresh it from
+  `https://drivechain.dev/config` (`networks[].sidechains[]`) when ECX publishes
+  one.
 
-The service account names (`bitcoin`, `ecashmeter`) and paths
-(`/srv/ecashmeter`, `/var/lib/ecashmeter`) are arbitrary — rename them if you
-like, but change them consistently across `deploy/systemd/*` and the env files.
+The service account names (`ecash`, `ecashmeter`) and paths (`/srv/ecashmeter`,
+`/var/lib/ecashmeter`, `/var/lib/ecash`) are arbitrary — rename them if you like,
+but change them consistently across `deploy/systemd/*` and the env files.
 
-## Sizing
+## Sizing — read this before provisioning
 
-**Hetzner CPX22** (2 vCPU / 4 GB / 80 GB, ~€19.49/mo), Ubuntu 26.04 — verified
-on exactly that combination. Cost-optimized CX23 (~€5.49) is the better buy if it
-is in stock; it was sold out in every EU location at deploy time. Ubuntu 26.04 is
-fine despite being new: NodeSource serves `nodistro` and Caddy's repo serves
-`any-version`, so neither depends on the release codename. The L2L-Signet
-chain is ~26 MB — Next.js is the largest thing on the box, and the 4 GB is for
-the build, not the node. Price the EU regions; Hetzner's 2026 increases hit US
-locations hardest.
+**ECX inherits Bitcoin's entire history.** It forks from Bitcoin's ledger at
+height 973,728, so a node validating from genesis needs every Bitcoin block ever
+mined: several hundred GB, growing. That is the single biggest constraint on this
+deployment, and it is why step 5 uses eCash's assumeutxo snapshot.
 
-For the August mainnet switch, rescale within the same line (CPX32: 4 vCPU / 8 GB /
-160 GB) so it stays an in-place resize — crossing to a different CPU family does
-not. CPU/RAM-only rescales are reversible; growing the disk is one-way.
+What the snapshot does and does not save:
 
-**Verified end to end on 2026-07-30:** CPX22 / Ubuntu 26.04 / Nuremberg, Node
-24.18.1 (`node:sqlite` unflagged), Bitcoin Core v30.2.0, Caddy v2.11.4. Full
-backfill indexed blocks 0–7311 (42,752 commitments, 8.3 MB store) in 6.1s with a
-648 MB peak. Survives reboot with all four units `enabled`.
+- **Does save time to usable.** Loading the published UTXO snapshot at height
+  965,000 puts the node at a validated tip within the hour instead of days. The
+  snapshot height is *below* the fork, so every post-fork block — all this app
+  ever reads — is covered by the snapshot chainstate.
+- **Does not save bandwidth.** A second chainstate still validates history from
+  genesis in the background, downloading the whole chain. Budget for that
+  transfer; it is well inside a typical VPS allowance but it is not free.
+- **`prune=` bounds disk, not bandwidth.** It also caps how far back the store
+  can ever be rebuilt, because verbosity-3 prevouts are unavailable for pruned
+  blocks. Keep the horizon well past `WINDOW_DAYS` (30).
+
+Rough disk budget, unpruned: snapshot file ~9.5 GB (deletable once loaded) +
+mainnet UTXO chainstate + blocks from 965,000 onward + the full historical
+backfill. Provision for the whole chain plus headroom, or set `prune=` and size
+for the horizon you want.
+
+Add swap regardless — `next build` can OOM on a small box, especially while the
+node is syncing.
+
+**Node version:** Node 24.x or newer, for `node:sqlite` unflagged. NodeSource
+serves `nodistro` and Caddy's repo serves `any-version`, so neither depends on
+the distro codename.
 
 ---
 
@@ -140,7 +160,7 @@ Check with `dig +short example.com` before step 8.
 ssh root@YOUR_IP
 
 apt update && apt upgrade -y
-apt install -y ufw git curl ca-certificates
+apt install -y ufw git curl ca-certificates unzip
 
 ufw default deny incoming
 ufw default allow outgoing
@@ -150,47 +170,58 @@ ufw allow 443/tcp
 ufw --force enable
 ```
 
-Port 38333 stays closed. bitcoind only needs *outbound* access to reach the
-signet seed peer.
+ECX's P2P port 8533 stays closed inbound. The node only needs *outbound* access
+to reach `seed.ecash.ninja:8533`.
 
 ```bash
 # Service accounts, both without login shells.
-adduser --system --group --home /var/lib/bitcoind bitcoin
+adduser --system --group --home /var/lib/ecash ecash
 adduser --system --group --home /srv/ecashmeter ecashmeter
 
-mkdir -p /var/lib/bitcoind /etc/bitcoin /var/lib/ecashmeter /etc/ecashmeter
-chown bitcoin:bitcoin /var/lib/bitcoind
+mkdir -p /var/lib/ecash /etc/ecash /var/lib/ecashmeter /etc/ecashmeter
+chown ecash:ecash /var/lib/ecash
 chown ecashmeter:ecashmeter /var/lib/ecashmeter
 chmod 750 /var/lib/ecashmeter
 ```
-
-Add swap — `next build` can OOM on 4 GB, especially while bitcoind is syncing:
 
 ```bash
 fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
 echo '/swapfile none swap sw 0 0' >> /etc/fstab
 ```
 
-## 3. Install Bitcoin Core 30.2
+## 3. Install the eCash node
+
+⚠ **Not Bitcoin Core.** ECX is a hard fork with its own consensus rules, network
+magic (`eca5dcb7`) and ports; a bitcoincore.org binary will not follow this
+chain. eCash ships its own `bitcoind`, based on Bitcoin Core 32.1.
+
+`https://releases.ecash.com/index.json` lists every channel with its version and
+per-file sha256 — read it rather than scraping the directory listing, and
+re-check the pinned values below against it, since `mainnet` advances.
 
 ```bash
 cd /tmp
-curl -O https://bitcoincore.org/bin/bitcoin-core-30.2/bitcoin-30.2-x86_64-linux-gnu.tar.gz
+V=1.2.0-core32.1
+curl -O https://releases.ecash.com/L1-ecash-bitcoin/mainnet/$V/L1-ecash-bitcoin-$V-x86_64-unknown-linux-gnu.zip
 
-# Verify before extracting. This checksum is from bitcoincore.org/bin/bitcoin-core-30.2/SHA256SUMS
-echo "6aa7bb4feb699c4c6262dd23e4004191f6df7f373b5d5978b5bcdd4bb72f75d8  bitcoin-30.2-x86_64-linux-gnu.tar.gz" | sha256sum -c -
-# must print: bitcoin-30.2-x86_64-linux-gnu.tar.gz: OK
+# Verify before extracting. Checksum from releases.ecash.com/index.json.
+echo "e5be8f86a72bf29b4f423e8a5917281eaf5004d6841e4c45ef511358952568b4  L1-ecash-bitcoin-$V-x86_64-unknown-linux-gnu.zip" | sha256sum -c -
+# must print: OK
 
-tar xzf bitcoin-30.2-x86_64-linux-gnu.tar.gz
-install -m 0755 bitcoin-30.2/bin/bitcoind bitcoin-30.2/bin/bitcoin-cli /usr/local/bin/
-bitcoind --version   # expect v30.2.0
+unzip -q L1-ecash-bitcoin-$V-x86_64-unknown-linux-gnu.zip
+install -m 0755 L1-ecash-bitcoin-$V-*/bitcoind L1-ecash-bitcoin-$V-*/bitcoin-cli /usr/local/bin/
+bitcoind --version | head -1   # expect: eCash daemon version ecash-v1.2.0-core32.1
 ```
+
+If that version line says "Bitcoin Core" rather than "eCash", you have the wrong
+binary and the node will sync Bitcoin instead of ECX.
 
 ## 4. Node config and RPC credentials
 
-Copy `deploy/bitcoin.conf` to `/etc/bitcoin/bitcoin.conf`, then generate real
-credentials. The binary tarball does not ship Core's `rpcauth.py`, so this
-reproduces it exactly (random salt, HMAC-SHA256):
+Copy `deploy/ecash.conf` to `/etc/ecash/ecash.conf` (note the filename — eCash's
+daemon reads `ecash.conf`, not `bitcoin.conf`), then generate real credentials.
+The binary tarball does not ship Core's `rpcauth.py`, so this reproduces it
+exactly (random salt, HMAC-SHA256):
 
 ```bash
 python3 - <<'EOF'
@@ -204,39 +235,75 @@ print(f"ECASH_RPC_PASS={pw}")
 EOF
 ```
 
-Put the `rpcauth=` line in `/etc/bitcoin/bitcoin.conf` (replacing
-`REPLACE_ME`) and the password in `/etc/ecashmeter/indexer.env` at step 6.
-**Never** leave the `user`/`password` defaults from local development —
-`lib/rpc.ts` warns about them for good reason.
+Put the `rpcauth=` line in `/etc/ecash/ecash.conf` (replacing `REPLACE_ME`) and
+the password in `/etc/ecashmeter/indexer.env` at step 6. **Never** leave the
+`user`/`password` defaults — `lib/rpc.ts` warns about them for good reason.
 
 ```bash
-chown root:bitcoin /etc/bitcoin/bitcoin.conf && chmod 640 /etc/bitcoin/bitcoin.conf
+chown root:ecash /etc/ecash/ecash.conf && chmod 640 /etc/ecash/ecash.conf
 ```
 
-## 5. Start the node
+## 5. Start the node, then load the snapshot
 
 ```bash
-cp deploy/systemd/bitcoind.service /etc/systemd/system/
+cp deploy/systemd/ecash-node.service /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now bitcoind
+systemctl enable --now ecash-node
 
-# Sync is minutes, not hours — the chain is ~26 MB.
-watch -n5 'bitcoin-cli -conf=/etc/bitcoin/bitcoin.conf -datadir=/var/lib/bitcoind getblockchaininfo | grep -E "chain|blocks|headers|initialblockdownload"'
+alias ec='bitcoin-cli -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash'
+ec getblockchaininfo | grep -E "chain|blocks|headers"
 ```
 
-Wait for `initialblockdownload: false`. If `blocks` stays at 0, the seed peer is
-unreachable — check `getpeerinfo` and outbound connectivity to
-`172.105.148.135:38333`.
+Headers should climb immediately. Blocks will not — that is what the snapshot is
+for.
 
-Confirm the network identity matches what the store expects:
+### Load the assumeutxo snapshot
 
 ```bash
-bitcoin-cli -conf=/etc/bitcoin/bitcoin.conf -datadir=/var/lib/bitcoind getblockhash 0
-# expect 00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6
+cd /var/lib/ecash
+sudo -u ecash curl -O https://releases.ecash.com/assumeutxo/mainnet/utxo-965000.dat
+echo "89351f7106051c0685880f9c64026e993335308de63ae6980e94ba3fafdc7dda  utxo-965000.dat" | sha256sum -c -
+# must print: OK  — ~9.5 GB
+
+ec loadtxoutset /var/lib/ecash/utxo-965000.dat
 ```
 
-The indexer stamps this genesis hash into `meta` and refuses to mix networks, so
-a mismatch here means the `signetchallenge` is wrong.
+`loadtxoutset` blocks while it loads. Afterwards:
+
+```bash
+ec getchainstates
+```
+
+**Read this output honestly.** It reports two chainstates: the snapshot one at
+the tip, and a background one still validating from genesis with
+`validated: false`. `getblockchaininfo` will cheerfully report the tip with
+`initialblockdownload: false` while history is still downloading underneath —
+`getchainstates` is the only command that shows the real picture. Once the
+background chainstate finishes, the snapshot file can be deleted.
+
+### Verify the node identity and the data the indexer needs
+
+```bash
+# 1. Is this actually ECX? Genesis cannot tell you — it is Bitcoin's.
+ec getblockhash 973728
+# expect 0000000000000001441a6a4ae49d679d4a30581db3e3eaeeb2fba5da6dc146ed
+```
+
+The indexer performs exactly this check and refuses to run if it fails, so a
+mismatch here means the binary or the config is wrong.
+
+```bash
+# 2. Does verbosity 3 still carry fees and prevouts on a snapshot-synced node?
+#    This is the one unproven assumption in this runbook. Verbosity 3 reads
+#    prevouts from block undo data, which exists only for blocks the node
+#    actually connected.
+ec getblock $(ec getblockhash $(( $(ec getblockcount) - 1 ))) 3 \
+  | python3 -c 'import json,sys; b=json.load(sys.stdin); t=[x for x in b["tx"] if "fee" in x]; print("txs:",len(b["tx"]),"with fee:",len(t)); print("prevout ok:", any("prevout" in v for x in b["tx"][1:2] for v in x.get("vin",[])))'
+```
+
+If `with fee: 0`, **stop** — the indexer will silently attribute 0 sats to every
+bid and the dashboard will under-report fees rather than fail loudly. Fix the
+node (unpruned range, finished undo data) before indexing.
 
 ## 6. Deploy the app
 
@@ -246,14 +313,13 @@ a mismatch here means the `signetchallenge` is wrong.
 mkdir -p /srv/ecashmeter && chown ecashmeter:ecashmeter /srv/ecashmeter
 sudo -u ecashmeter git clone https://github.com/vake21/ecash-meter.git /srv/ecashmeter
 
-# Node must be new enough to ship node:sqlite unflagged.
 curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
 apt install -y nodejs
 node -e "require('node:sqlite'); console.log('node:sqlite OK')"
 ```
 
-If that last line throws, the Node version is too old — install 26.x instead.
-There is no fallback: the store has no external database driver by design.
+If that last line throws, the Node version is too old. There is no fallback: the
+store has no external database driver by design.
 
 ```bash
 cd /srv/ecashmeter
@@ -277,8 +343,8 @@ chown root:ecashmeter /etc/ecashmeter/*.env && chmod 640 /etc/ecashmeter/*.env
 ## 7. First index, then the services
 
 Install the units first, then run the backfill through the oneshot unit. Do NOT
-use `env $(grep … | xargs)` — the generated RPC password is random and can contain
-characters that word-splitting mangles, and the unit already reads the
+use `env $(grep … | xargs)` — the generated RPC password is random and can
+contain characters that word-splitting mangles, and the unit already reads the
 EnvironmentFile correctly:
 
 ```bash
@@ -288,18 +354,16 @@ cp deploy/systemd/ecashmeter-index.timer   /etc/systemd/system/
 systemctl daemon-reload
 
 systemctl start ecashmeter-index.service
-journalctl -u ecashmeter-index -n 5 --no-pager -o cat
+journalctl -u ecashmeter-index -n 20 --no-pager -o cat
 ```
 
-Expect something like `inserted 7300 block(s), N commitment(s)`. If it reports
-only ~432 blocks, `ECASH_BACKFILL_BLOCKS` was not picked up — the 30-day chart
-will look nearly empty.
+The first run backfills `ECASH_BACKFILL_BLOCKS` (10,000 by default, reaching back
+past the fork) in chunks of `ECASH_INDEX_CHUNK`, logging `indexed to N of M` as it
+goes. These are real mainnet blocks at verbosity 3, so expect minutes, not the
+sub-second runs a tiny chain gives. If it refuses with a chain-identity or
+parser-version message, it is telling you exactly what to fix.
 
 ```bash
-cp deploy/systemd/ecashmeter.service       /etc/systemd/system/
-cp deploy/systemd/ecashmeter-index.service /etc/systemd/system/
-cp deploy/systemd/ecashmeter-index.timer   /etc/systemd/system/
-systemctl daemon-reload
 systemctl enable --now ecashmeter.service
 systemctl enable --now ecashmeter-index.timer   # the TIMER, not the .service
 
@@ -344,13 +408,16 @@ curl -sI --max-time 5 http://YOUR_IP:3000/            # must FAIL (loopback only
 
 ```bash
 # logs
-journalctl -u bitcoind -f
+journalctl -u ecash-node -f
 journalctl -u ecashmeter -f
 journalctl -u ecashmeter-index --since "1 hour ago"
 systemctl list-timers ecashmeter-index.timer
 
 # is the data fresh? 503 = stale, empty, or parser mismatch
 curl -s https://example.com/api/health | python3 -m json.tool
+
+# is history still backfilling behind the snapshot?
+bitcoin-cli -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash getchainstates
 ```
 
 Point an uptime monitor at `/api/health` and alert on non-200. It returns 503
@@ -371,8 +438,8 @@ systemctl restart ecashmeter
 The store lives in `/var/lib/ecashmeter`, outside the app directory, so a
 redeploy never touches it.
 
-**Rebuild the store** (only needed when `PARSER_VERSION` in `lib/bmm.ts`
-changes — the indexer refuses to append across versions and tells you so):
+**Rebuild the store** (needed when `PARSER_VERSION` in `lib/bmm.ts` changes — the
+indexer refuses to append across versions and tells you so):
 
 ```bash
 systemctl stop ecashmeter-index.timer
@@ -381,33 +448,6 @@ systemctl start ecashmeter-index.service   # reads the EnvironmentFile properly
 systemctl start ecashmeter-index.timer
 ```
 
-The DB is a disposable derived cache. Backing it up is optional; it rebuilds from
-the node in under a second on signet.
-
----
-
-## August 2026: switching to mainnet
-
-Do not do this piecemeal — it is a network change, and the indexer will
-(correctly) refuse to mix networks by genesis hash.
-
-1. **Resolve the open question first:** does eCash mainnet inherit Bitcoin's full
-   ~700 GB history, or start from a UTXO snapshot? A 1:1 split implies the former,
-   which means resizing to CPX31 and setting a `prune` value. Confirm before
-   provisioning, because it decides the disk.
-2. Rescale the Hetzner instance (CPU/RAM in place; growing the disk is one-way).
-3. Replace `[signet]` in `/etc/bitcoin/bitcoin.conf` with mainnet settings — drop
-   `signetchallenge`, `signetblocktime`, `acceptnonstdtxn` and the signet
-   `addnode`. Set `chain=main`.
-4. Wipe the datadir and resync, then **delete the store** — its stamped
-   `genesis_hash` is signet's, and the indexer will refuse to append to it.
-5. Re-check `lib/config.ts`: the 8-slot registry is hardcoded from L2L-Signet.
-   The mainnet slate may differ, and long term this should be read from the
-   enforcer's `ValidatorService.GetSidechains` rather than baked in.
-6. Expect `metric` to flip from `bmm` to `fees` once real bidding starts —
-   `lib/aggregate.ts` switches on any non-zero attributed fee, which is
-   intentional so the first real bids are visible immediately.
-
-If pruning: `prune` caps how far back the store can ever be rebuilt, because
-verbosity-3 prevouts are unavailable for pruned blocks. Keep the horizon well
-past `WINDOW_DAYS` (30) — `prune=100000` is roughly 15 months.
+The DB is a disposable derived cache; backing it up is optional. Rebuilding
+re-fetches the backfill range from the node, which on mainnet is minutes rather
+than instant — and it cannot reach further back than the node's prune horizon.

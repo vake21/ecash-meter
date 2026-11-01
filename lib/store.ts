@@ -13,7 +13,7 @@
 // is exposed so the UI can show freshness rather than presenting stale data as new.
 
 import type { DashboardData, DrivechainStats, FeePoint } from "./types";
-import { DRIVECHAINS, WINDOW_DAYS } from "./config";
+import { resolveDrivechains, WINDOW_DAYS } from "./config";
 import { get, all, getMeta } from "./db";
 import { finalizeStats } from "./aggregate";
 import { utcDate } from "./bmm";
@@ -67,15 +67,14 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
     throw new EmptyStoreError("no blocks indexed yet");
   }
 
-  const network = (getMeta("network") ??
-    "signet") as DashboardData["network"];
+  const network = (getMeta("network") ?? "ecx") as DashboardData["network"];
 
   // Reference point for the whole window is the latest indexed block time.
   const lastBlockTime = tipRow.lastTime;
   const refDate = utcDate(lastBlockTime);
   const firstDate = utcDate(tipRow.firstTime!);
   // Contiguous calendar window: at most WINDOW_DAYS, and never longer than the
-  // span actually covered (so a 3-day signet doesn't render 27 empty days).
+  // span actually covered (so a 3-day-old store doesn't render 27 empty days).
   const spanDays = daysBetween(firstDate, refDate) + 1;
   const windowDays = Math.max(1, Math.min(WINDOW_DAYS, spanDays));
   const dates = lastNDatesEnding(refDate, windowDays);
@@ -114,7 +113,16 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
     byDate.set(r.date, { bmm: r.bmm, fee: r.fee });
   }
 
-  const stats: DrivechainStats[] = DRIVECHAINS.map((chain) => {
+  // Rows come from the slots actually present in the window (plus any slot with
+  // rolling-24h activity), NOT from a hardcoded registry. Iterating a fixed
+  // slate silently dropped every slot missing from it — real indexed activity
+  // vanished from the site. resolveDrivechains() supplies metadata, synthesizing
+  // an entry for a slot we have no published name for.
+  const observedSlots = new Set<number>([
+    ...tally.keys(),
+    ...last24BySlot.keys(),
+  ]);
+  const stats: DrivechainStats[] = resolveDrivechains(observedSlots).map((chain) => {
     const byDate = tally.get(chain.slot);
     const series: FeePoint[] = dates.map((date) => ({
       date,
@@ -150,8 +158,8 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
     grandTotalBmmCommitments,
     lastBlockTime,
     note:
-      grandTotalFeesSats === 0
-        ? "BMM commitments are live from stored history; fee bids are ~0 on this orchestrator-driven signet."
+      grandTotalBmmCommitments > 0 && grandTotalFeesSats === 0
+        ? "No BMM bid in this window paid a fee, so the headline is commitment activity."
         : undefined,
   };
 }

@@ -2,7 +2,7 @@
 // BOTH the live node scan (lib/node.ts) and the persistent indexer (scripts/index.ts),
 // so the two paths can never disagree on how a block is interpreted.
 //
-// ─── BMM ON-CHAIN FORMAT (verified against BitWindow L2L-Signet, 2026-07-14) ───
+// ─── BMM ON-CHAIN FORMAT (verified against live eCash chain data, 2026-11-01) ───
 // Each mainchain coinbase carries one OP_RETURN output PER merge-mined slot:
 //   script hex = 6a 25 d1617368 <slot:1 byte> <hStar:32 bytes>
 //   (6a=OP_RETURN, 25=push 37 bytes, d1617368=BMM tag, then slot + h*)
@@ -16,13 +16,19 @@
 // a coinbase h*, then charging ONLY that transaction's own fee to that slot — the
 // individual bid's fee, never the block's aggregate fee pool. Each BMM request tx
 // in a block is priced and attributed independently; hstar is always a full
-// 32-byte hash here, so we never match an empty/partial string. ⚠ On this signet,
-// blocks are orchestrator-driven (GenerateBlocks) with NO fee-paying bid txs — so
-// fees read ~0 and the live headline metric is BMM commitment COUNT. The same
-// parser yields real per-bid fee numbers on a fee-active network (mainnet).
+// 32-byte hash here, so we never match an empty/partial string.
 //
-// Requires getblock verbosity 3 (Bitcoin Core ≥ v25): it supplies each tx's `fee`
-// directly, plus `vin[].prevout.value` for the sum(inputs) − sum(outputs) fallback.
+// Verified against real chain data: a live block with 7 coinbase commitments
+// (slots 2, 8, 9, 13, 98, 99, 255) matched exactly one paid bid tx per
+// commitment, attributing their individual fees (6 × 564 sats and 1 × 378 sats)
+// rather than the block's aggregate pool. Where a window contains commitments
+// but no paid bid, fees read 0 and the headline metric falls back to commitment
+// COUNT — see lib/aggregate.ts.
+//
+// Requires getblock verbosity 3 (Bitcoin Core ≥ v25; eCash's node is based on
+// Core 32.1): it supplies each tx's `fee` directly, plus `vin[].prevout.value`
+// for the sum(inputs) − sum(outputs) fallback. Verbosity 3 reads prevouts from
+// block undo data, so it only works for blocks the node holds undo data for.
 
 /** The 4-byte BMM tag plus the OP_RETURN/push prefix, as a hex string. */
 export const BMM_PREFIX = "6a25d1617368"; // 6a=OP_RETURN 25=push37 d1617368=tag
@@ -67,7 +73,7 @@ export interface ParsedCommitment {
   slot: number;
   /** 32-byte sidechain block hash commitment, hex (lowercased, always 64 chars). */
   hstar: string;
-  /** Fee (sats) attributed to this commitment's slot (≈0 on orchestrator signets). */
+  /** Fee (sats) attributed to this commitment's slot (0 when the bid paid none). */
   feeSats: number;
 }
 export interface ParsedBlock {

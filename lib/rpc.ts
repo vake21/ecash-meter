@@ -1,4 +1,4 @@
-// Minimal Bitcoin-style JSON-RPC client for the eCash/L2L mainchain node.
+// Minimal Bitcoin-style JSON-RPC client for the eCash (ECX) mainchain node.
 // Server-side only (reads credentials from env; talks to a localhost node).
 //
 // Configuration is read LAZILY, on each call, rather than captured at module
@@ -8,13 +8,15 @@
 // .env.local was loaded and silently hit the wrong endpoint. Reading per call
 // makes import order irrelevant.
 //
-// Defaults match a stock BitWindow L2L-Signet install; override via env:
-//   ECASH_RPC_URL         (default http://127.0.0.1:38332)
+// Defaults match a stock eCash mainnet node (`bitcoind` from the
+// L1-ecash-bitcoin release: mainnet JSON-RPC listens on 8532, P2P on 8533).
+// Override via env:
+//   ECASH_RPC_URL         (default http://127.0.0.1:8532)
 //   ECASH_RPC_USER        (default "user")
 //   ECASH_RPC_PASS        (default "password")
 //   ECASH_RPC_TIMEOUT_MS  (default 30000)
 
-const DEFAULT_URL = "http://127.0.0.1:38332";
+const DEFAULT_URL = "http://127.0.0.1:8532";
 const DEFAULT_USER = "user";
 const DEFAULT_PASS = "password";
 const DEFAULT_TIMEOUT_MS = 30_000;

@@ -35,7 +35,7 @@ beforeEach(() => {
   process.env.ECASH_METER_DB = ":memory:";
   closeDb();
   ensureSchema();
-  setMeta("network", "signet");
+  setMeta("network", "ecx");
 });
 afterEach(() => closeDb());
 
@@ -101,4 +101,56 @@ test("lastBlockTime is exposed so the UI can flag stale data", async () => {
   seedCommitment(2, 2, 1, TIME);
   const data = await getStoredDashboardData();
   assert.equal(data.lastBlockTime, TIME); // the most recent block time
+});
+
+// ── Unregistered slots must never be hidden ──────────────────────────────────
+// Both read paths used to build their rows by iterating the hardcoded registry
+// (`DRIVECHAINS.map(...)`), so a slot the registry didn't list vanished from the
+// dashboard even though the indexer had stored its commitments and fees. That is
+// exactly the shape of ECX mainnet today: the only merge-mining seen on it so
+// far is on slot 46, which no published slate names.
+
+test("a slot missing from the registry still renders, with its fees", async () => {
+  seedCommitment(1, 46, 564); // unregistered slot, real fee
+  const data = await getStoredDashboardData();
+
+  const row = data.stats.find((s) => s.chain.slot === 46);
+  assert.ok(row, "slot 46 must appear — dropping it understates total fees");
+  assert.equal(row.totalFeesSats, 564);
+  assert.equal(row.bmmCommitments, 1);
+  // Synthesized metadata, not a crash and not a blank name.
+  assert.equal(row.chain.name, "Slot 46");
+  assert.equal(row.chain.ticker, "S46");
+  assert.match(row.chain.color, /^#[0-9a-f]{6}$/i);
+  // It is the only active chain, so it carries the whole headline.
+  assert.equal(data.grandTotalFeesSats, 564);
+  assert.equal(data.stats[0].chain.slot, 46);
+  assert.equal(data.stats[0].shareOfTotal, 1);
+});
+
+test("rows are only the observed slots, not the whole registry", async () => {
+  seedCommitment(1, 9, 100); // Thunder, a known slot
+  seedCommitment(2, 46, 50); // unregistered
+  const data = await getStoredDashboardData();
+
+  assert.deepEqual(
+    data.stats.map((s) => s.chain.slot).sort((a, b) => a - b),
+    [9, 46],
+  );
+  // A known slot keeps its published metadata and its validated colour.
+  const thunder = data.stats.find((s) => s.chain.slot === 9)!;
+  assert.equal(thunder.chain.name, "Thunder");
+  assert.equal(thunder.chain.color, "#199e70");
+  // The unregistered slot does not steal a registered chain's colour.
+  const unknown = data.stats.find((s) => s.chain.slot === 46)!;
+  assert.notEqual(unknown.chain.color, thunder.chain.color);
+});
+
+test("a slot with only rolling-24h activity is not dropped", async () => {
+  // Outside the aggregation window's date grouping but inside the 24h boundary
+  // is not possible here; this guards the union of both sources instead.
+  seedCommitment(1, 255, 7);
+  const data = await getStoredDashboardData();
+  const row = data.stats.find((s) => s.chain.slot === 255)!;
+  assert.equal(row.feesLast24hSats, 7);
 });

@@ -6,7 +6,7 @@
 Description=Run the eCash Meter indexer every 5 minutes
 
 [Timer]
-# Give bitcoind time to come up and start serving RPC after a reboot.
+# Give the node time to come up and start serving RPC after a reboot.
 OnBootSec=2min
 OnUnitActiveSec=5min
 AccuracySec=30s

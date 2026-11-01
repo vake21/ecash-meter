@@ -8,8 +8,8 @@
 [Unit]
 Description=eCash Meter indexer — scan new L1 blocks into SQLite
 Documentation=https://github.com/vake21/ecash-meter
-After=bitcoind.service
-Wants=bitcoind.service
+After=ecash-node.service
+Wants=ecash-node.service
 
 [Service]
 Type=oneshot
@@ -19,8 +19,9 @@ WorkingDirectory=/srv/ecashmeter
 # This one DOES carry the RPC credentials.
 EnvironmentFile=/etc/ecashmeter/indexer.env
 ExecStart=/usr/bin/npm run index
-# A pass takes well under a second on signet; if it hangs, something is wrong.
-TimeoutStartSec=600
+# An incremental pass is quick, but the FIRST run backfills thousands of real
+# mainnet blocks at verbosity 3 — give it room.
+TimeoutStartSec=3600
 
 NoNewPrivileges=true
 PrivateTmp=true

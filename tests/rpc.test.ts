@@ -58,7 +58,7 @@ test("config is read lazily — env set AFTER import still applies", async () =>
 test("defaults are used only when the variables are absent", () => {
   for (const k of ENV_KEYS) delete process.env[k];
   const cfg = getRpcConfig();
-  assert.equal(cfg.url, "http://127.0.0.1:38332");
+  assert.equal(cfg.url, "http://127.0.0.1:8532");
   assert.equal(cfg.user, "user");
   assert.equal(cfg.pass, "password");
   assert.equal(cfg.usingDefaultCredentials, true);
@@ -101,7 +101,7 @@ test("a non-http(s) URL is rejected", () => {
 });
 
 test("a stalled request times out via AbortSignal", async () => {
-  process.env.ECASH_RPC_URL = "http://127.0.0.1:38332";
+  process.env.ECASH_RPC_URL = "http://127.0.0.1:8532";
   process.env.ECASH_RPC_TIMEOUT_MS = "25";
   // Mock fetch that never resolves on its own — only the abort signal ends it.
   globalThis.fetch = ((_url: string, opts: RequestInit) =>

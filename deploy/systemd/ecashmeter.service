@@ -1,7 +1,7 @@
 # /etc/systemd/system/ecashmeter.service
 #
 # The web app. Reads the SQLite store ONLY — it never contacts bitcoind, which is
-# why it has no dependency on bitcoind.service and will keep serving the last
+# why it has no dependency on ecash-node.service and will keep serving the last
 # indexed data even if the node is down.
 [Unit]
 Description=eCash Meter web app (Next.js)

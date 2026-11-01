@@ -1,4 +1,4 @@
-import { DRIVECHAINS, WINDOW_DAYS } from "./config";
+import { KNOWN_DRIVECHAINS, WINDOW_DAYS } from "./config";
 import { finalizeStats } from "./aggregate";
 import type {
   DashboardData,
@@ -10,9 +10,11 @@ import type {
 // same numbers on every server/client pass (no hydration mismatch) and so the
 // mockup is reproducible. A small seeded PRNG drives the variation.
 //
-// This module mimics the OUTPUT of aggregating BMM bids per drivechain. When we
-// wire up a real node, lib/node.ts will return the same DashboardData shape and
-// this file gets swapped out — the UI never changes.
+// This module mimics the OUTPUT of aggregating BMM bids per drivechain, and is
+// only a fallback for local work and for an empty store — the real paths
+// (lib/store.ts, lib/node.ts) return the same DashboardData shape, so the UI is
+// identical either way. It deliberately shows every KNOWN drivechain busy at
+// once, which no real chain need look like.
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -35,7 +37,7 @@ const ACTIVITY_WEIGHT: Record<number, number> = {
   24: 0.25, // Elements (intermittently mined)
   98: 0.7, // zSide
   99: 0.55, // Photon
-  255: 0.15, // Coinshift (sparse, like real signet)
+  255: 0.15, // Coinshift (sparse)
 };
 
 // Fixed reference date for reproducible ISO date labels (project "today").
@@ -67,7 +69,7 @@ function buildSeries(slot: number): FeePoint[] {
 }
 
 function buildStats(): DrivechainStats[] {
-  const raw = DRIVECHAINS.map((chain) => {
+  const raw = KNOWN_DRIVECHAINS.map((chain) => {
     const series = buildSeries(chain.slot);
     const totalFeesSats = series.reduce((s, p) => s + p.feeSats, 0);
     const feesLast24hSats = series[series.length - 1].feeSats;

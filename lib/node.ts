@@ -1,6 +1,6 @@
 import type { DashboardData, DrivechainStats, FeePoint } from "./types";
 import { getMockDashboardData } from "./mock-data";
-import { DRIVECHAINS } from "./config";
+import { resolveDrivechains } from "./config";
 import { rpc, mapPool } from "./rpc";
 import { parseBlock, utcDate, type RawBlock } from "./bmm";
 import { getStoredDashboardData, EmptyStoreError } from "./store";
@@ -10,7 +10,7 @@ import { finalizeStats } from "./aggregate";
 // DashboardData shape, so none of the UI changes when we swap between them.
 //
 // Source is chosen by env (see .env.local):
-//   ECASH_SOURCE=db    → read persisted history from Postgres (does NOT touch the
+//   ECASH_SOURCE=db    → read persisted history from SQLite (does NOT touch the
 //                        node; the indexer keeps it fresh). Falls back to mock if
 //                        the store is empty. This is the mode a deployed site uses.
 //   ECASH_SOURCE=live  → scan the node directly at request time (short TTL cache).
@@ -60,15 +60,12 @@ export async function getDashboardData(): Promise<DashboardData> {
     console.error("[ecash-meter] live scan failed, serving mock:", err);
     return {
       ...getMockDashboardData(),
-      note: "Live node unreachable — showing mock data. Is BitWindow running?",
+      note: "Live node unreachable — showing mock data. Is the ECX node running?",
     };
   }
 }
 
 async function getLiveDashboardData(): Promise<DashboardData> {
-  const chain = await rpc<{ chain: string }>("getblockchaininfo").then(
-    (i) => i.chain,
-  );
   const tip = await rpc<number>("getblockcount");
   const start = Math.max(0, tip - SCAN_BLOCKS + 1);
   const heights = Array.from({ length: tip - start + 1 }, (_, i) => start + i);
@@ -116,7 +113,13 @@ async function getLiveDashboardData(): Promise<DashboardData> {
     }
   }
 
-  const stats: DrivechainStats[] = DRIVECHAINS.map((chainMeta) => {
+  // Rows come from the slots actually observed in the scanned range, not from a
+  // hardcoded registry — see the same fix in lib/store.ts.
+  const observedSlots = new Set<number>([
+    ...tally.keys(),
+    ...last24BySlot.keys(),
+  ]);
+  const stats: DrivechainStats[] = resolveDrivechains(observedSlots).map((chainMeta) => {
     const byDate = tally.get(chainMeta.slot);
     const series: FeePoint[] = dates.map((date) => ({
       date,
@@ -141,12 +144,11 @@ async function getLiveDashboardData(): Promise<DashboardData> {
   const { metric, grandTotalFeesSats, grandTotalBmmCommitments } =
     finalizeStats(stats);
 
-  const network = (
-    chain === "main" ? "mainnet" : chain === "test" ? "testnet" : "signet"
-  ) as DashboardData["network"];
-
   return {
-    network,
+    // ECX by configuration, not by detection: `getblockchaininfo.chain` reads
+    // "main" on eCash exactly as it does on Bitcoin, so it cannot identify the
+    // network. The indexer is what verifies chain identity (lib/indexer.ts).
+    network: "ecx",
     metric,
     tipHeight: tip,
     windowDays: dates.length,
@@ -156,8 +158,8 @@ async function getLiveDashboardData(): Promise<DashboardData> {
     grandTotalBmmCommitments,
     lastBlockTime,
     note:
-      grandTotalFeesSats === 0
-        ? "BMM commitments are live; fee bids are ~0 on this orchestrator-driven signet."
+      grandTotalBmmCommitments > 0 && grandTotalFeesSats === 0
+        ? "No BMM bid in this window paid a fee, so the headline is commitment activity."
         : undefined,
   };
 }

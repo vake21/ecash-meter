@@ -1,19 +1,20 @@
-# /etc/systemd/system/bitcoind.service
+# /etc/systemd/system/ecash-node.service
 [Unit]
-Description=Bitcoin Core (L2L-Signet) for eCash Meter
+Description=eCash (ECX) mainnet node for eCash Meter
 Documentation=https://github.com/vake21/ecash-meter
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=bitcoin
-Group=bitcoin
-ExecStart=/usr/local/bin/bitcoind -conf=/etc/bitcoin/bitcoin.conf -datadir=/var/lib/bitcoind
+User=ecash
+Group=ecash
+ExecStart=/usr/local/bin/bitcoind -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash
 Restart=on-failure
 RestartSec=10
-# Core flushes the chainstate on shutdown; killing it early can corrupt the DB.
-TimeoutStopSec=300
+# The node flushes its chainstate on shutdown; killing it early can corrupt the
+# DB, and flushing a mainnet-sized UTXO set is not instant.
+TimeoutStopSec=600
 KillSignal=SIGTERM
 
 # Hardening. ProtectSystem=strict makes the filesystem read-only, so the datadir
@@ -22,7 +23,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/bitcoind
+ReadWritePaths=/var/lib/ecash
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

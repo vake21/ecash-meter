@@ -11,7 +11,7 @@ export interface Freshness {
   label: string | null;
 }
 
-/** Data older than this reads as stale (generous vs ~10-min signet blocks). */
+/** Data older than this reads as stale (generous vs ~10-min ECX blocks). */
 export const STALE_AFTER_SEC = 30 * 60;
 
 export function computeFreshness(
