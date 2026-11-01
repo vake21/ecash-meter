@@ -1,6 +1,7 @@
 import { get, getMeta } from "@/lib/db";
 import { computeFreshness, STALE_AFTER_SEC } from "@/lib/freshness";
 import { PARSER_VERSION } from "@/lib/bmm";
+import { ECX_FORK_BLOCK_HASH } from "@/lib/config";
 
 // Never cache: the point of this route is to report the store's state right now.
 export const dynamic = "force-dynamic";
@@ -36,8 +37,23 @@ export async function GET() {
     // store is frozen even though nothing has crashed. Surface it as unhealthy.
     const parserMismatch = storedParser !== PARSER_VERSION;
 
+    // Chain identity, for the same reason: a store built from anything other
+    // than ECX is frozen (the indexer refuses to append to it) and is serving
+    // data from the wrong chain. Checked here so monitoring reports it directly
+    // instead of waiting for the data to go stale. A missing stamp counts as a
+    // mismatch — it predates identity stamping, or carries only the old
+    // genesis-based identity, which could not tell ECX from Bitcoin.
+    const storedFork = getMeta("fork_block_hash");
+    const chainMismatch = storedFork !== ECX_FORK_BLOCK_HASH;
+
     const body = {
-      status: parserMismatch ? "parser-mismatch" : isStale ? "stale" : "ok",
+      status: chainMismatch
+        ? "chain-mismatch"
+        : parserMismatch
+          ? "parser-mismatch"
+          : isStale
+            ? "stale"
+            : "ok",
       network: getMeta("network"),
       tipHeight: Number(row.tip),
       blocks: Number(row.blocks),
@@ -46,10 +62,11 @@ export async function GET() {
       ageSec,
       staleAfterSec: STALE_AFTER_SEC,
       parserVersion: { stored: storedParser, expected: PARSER_VERSION },
+      chain: { stored: storedFork, expected: ECX_FORK_BLOCK_HASH },
     };
 
     return Response.json(body, {
-      status: isStale || parserMismatch ? 503 : 200,
+      status: isStale || parserMismatch || chainMismatch ? 503 : 200,
     });
   } catch (err) {
     // Unreadable/missing DB file, or schema not yet created.
