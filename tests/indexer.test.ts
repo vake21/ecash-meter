@@ -396,3 +396,29 @@ test("a reorg prune happens in the first chunk's transaction", async () => {
   assert.equal(stale, 0);
   assert.equal(dbHeights()[dbHeights().length - 1], F + 25);
 });
+
+// ── The backfill never reaches below the fork ────────────────────────────────
+// Blocks below ECX_FORK_HEIGHT are Bitcoin blocks where BIP 300/301 is not
+// active, so a coinbase OP_RETURN matching the BMM pattern there is a false
+// positive, not a drivechain commitment. An over-sized backfill must clamp
+// rather than invent sidechain activity in Bitcoin's history.
+
+test("an over-sized backfill clamps to the fork height", async () => {
+  const chain = new FakeChain(5); // tip = F+5
+  // 1000 blocks would reach ~F-994 — the FakeChain would happily serve them.
+  const res = await run(chain.rpc, 1000);
+  assert.equal(res.status, "ok");
+  assert.equal(res.fromHeight, F, "must start exactly at the fork block");
+  const got = dbHeights();
+  assert.equal(got[0], F, "nothing below the fork may be stored");
+  assert.equal(got[got.length - 1], F + 5);
+  assert.equal(got.length, 6); // F..F+5 inclusive
+});
+
+test("a backfill inside the post-fork range is untouched by the clamp", async () => {
+  const chain = new FakeChain(20); // tip = F+20
+  const res = await run(chain.rpc, 5);
+  assert.equal(res.status, "ok");
+  assert.equal(res.fromHeight, F + 16); // tip-5+1, well above the fork
+  assert.equal(dbHeights()[0], F + 16);
+});

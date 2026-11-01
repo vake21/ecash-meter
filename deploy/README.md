@@ -116,29 +116,64 @@ but change them consistently across `deploy/systemd/*` and the env files.
 
 **ECX inherits Bitcoin's entire history.** It forks from Bitcoin's ledger at
 height 973,728, so a node validating from genesis needs every Bitcoin block ever
-mined: several hundred GB, growing. That is the single biggest constraint on this
-deployment, and it is why step 5 uses eCash's assumeutxo snapshot.
+mined: several hundred GB, growing. This deployment handles that by **pruning**,
+which is cheap here for two reasons specific to this workload:
 
-What the snapshot does and does not save:
+- The site reads a **rolling recent window only** — `WINDOW_DAYS` is 30 (~4,320
+  blocks) and the indexer fetches only blocks newer than its stored tip. Nothing
+  ever asks for an old block.
+- It does **not** run `bip300301-enforcer`, which is what actually breaks under
+  pruning (`Block not available`) on a full drivechain node.
 
-- **Does save time to usable.** Loading the published UTXO snapshot at height
-  965,000 puts the node at a validated tip within the hour instead of days. The
-  snapshot height is *below* the fork, so every post-fork block — all this app
-  ever reads — is covered by the snapshot chainstate.
-- **Does not save bandwidth.** A second chainstate still validates history from
-  genesis in the background, downloading the whole chain. Budget for that
-  transfer; it is well inside a typical VPS allowance but it is not free.
-- **`prune=` bounds disk, not bandwidth.** It also caps how far back the store
-  can ever be rebuilt, because verbosity-3 prevouts are unavailable for pruned
-  blocks. Keep the horizon well past `WINDOW_DAYS` (30).
+`deploy/ecash.conf` sets `prune=40000`. Budget for an 80 GB disk:
 
-Rough disk budget, unpruned: snapshot file ~9.5 GB (deletable once loaded) +
-mainnet UTXO chainstate + blocks from 965,000 onward + the full historical
-backfill. Provision for the whole chain plus headroom, or set `prune=` and size
-for the horizon you want.
+| | |
+|---|---|
+| chainstate (~165.7M UTXOs) | ~12–15 GB |
+| OS, Node, the Next build, swap | ~10 GB |
+| blocks + undo at `prune=40000` | 40 GB |
+| headroom | ~15 GB |
 
-Add swap regardless — `next build` can OOM on a small box, especially while the
-node is syncing.
+40 GB of blocks is roughly four to five months at Bitcoin-sized blocks, against a
+30-day display window.
+
+**The sync still downloads the whole chain** — pruning deletes as it goes — so
+budget bandwidth, not disk. Hetzner includes 20 TB. Expect days, not hours, on a
+2-vCPU box.
+
+### What pruning costs you
+
+The prune horizon **caps how far back the store can ever be rebuilt**, because
+verbosity-3 prevouts are unavailable for pruned blocks. That changes the SQLite
+store from a throwaway derived cache into the only copy of your early history:
+if `PARSER_VERSION` ever changes — which deliberately forces a rebuild — fee
+history older than the horizon is gone.
+
+**So back the store up.** It is small (~8 MB for 7,300 blocks). A nightly copy is
+enough:
+
+```bash
+install -d -o ecashmeter -g ecashmeter /var/backups/ecashmeter
+sudo -u ecashmeter sqlite3 /var/lib/ecashmeter/ecash-meter.sqlite \
+  ".backup '/var/backups/ecashmeter/ecash-meter-$(date +%F).sqlite'"
+```
+
+Use `.backup`, not `cp` — the store is in WAL mode and a plain copy of a live
+database can be torn.
+
+### Not using the assumeutxo snapshot
+
+eCash publishes a UTXO snapshot, and this runbook deliberately skips it:
+
+- It would only shorten *time to usable*, not the download. Core still validates
+  history from genesis in a background chainstate either way.
+- It adds an untested interaction with pruning.
+- **As of 2026-11-01 the published mainnet snapshot is unusable anyway**: its
+  header carries Bitcoin mainnet's network magic (`f9beb4d9`) instead of eCash's
+  (`eca5dcb7`), so `loadtxoutset` rejects it with "created for an unrecognized
+  network". Reported upstream.
+
+A plain pruned sync from genesis needs no babysitting.
 
 **Node version:** Node 24.x or newer, for `node:sqlite` unflagged. NodeSource
 serves `nodistro` and Caddy's repo serves `any-version`, so neither depends on
@@ -249,7 +284,7 @@ the password in `/etc/ecashmeter/indexer.env` at step 6. **Never** leave the
 chown root:ecash /etc/ecash/ecash.conf && chmod 640 /etc/ecash/ecash.conf
 ```
 
-## 5. Start the node, then load the snapshot
+## 5. Start the node
 
 ```bash
 cp deploy/systemd/ecash-node.service /etc/systemd/system/
@@ -257,59 +292,45 @@ systemctl daemon-reload
 systemctl enable --now ecash-node
 
 alias ec='bitcoin-cli -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash'
-ec getblockchaininfo | grep -E "chain|blocks|headers"
+watch -n30 'bitcoin-cli -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash \
+  getblockchaininfo | grep -E "blocks|headers|verificationprogress|pruned"'
 ```
 
-Headers should climb immediately. Blocks will not — that is what the snapshot is
-for.
+Headers climb to the tip within minutes; blocks take days. Watch
+`verificationprogress`, not `blocks` — ECX is at ~37% of blocks by the time it
+is 5% through the actual work, because post-2017 blocks are far heavier. A
+block-count extrapolation will lie to you.
 
-### Load the assumeutxo snapshot
-
-```bash
-cd /var/lib/ecash
-sudo -u ecash curl -O https://releases.ecash.com/assumeutxo/mainnet/utxo-965000.dat
-echo "89351f7106051c0685880f9c64026e993335308de63ae6980e94ba3fafdc7dda  utxo-965000.dat" | sha256sum -c -
-# must print: OK  — ~9.5 GB
-
-ec loadtxoutset /var/lib/ecash/utxo-965000.dat
-```
-
-`loadtxoutset` blocks while it loads. Afterwards:
+### Verify the chain identity
 
 ```bash
-ec getchainstates
-```
-
-**Read this output honestly.** It reports two chainstates: the snapshot one at
-the tip, and a background one still validating from genesis with
-`validated: false`. `getblockchaininfo` will cheerfully report the tip with
-`initialblockdownload: false` while history is still downloading underneath —
-`getchainstates` is the only command that shows the real picture. Once the
-background chainstate finishes, the snapshot file can be deleted.
-
-### Verify the node identity and the data the indexer needs
-
-```bash
-# 1. Is this actually ECX? Genesis cannot tell you — it is Bitcoin's.
 ec getblockhash 973728
 # expect 0000000000000001441a6a4ae49d679d4a30581db3e3eaeeb2fba5da6dc146ed
 ```
 
-The indexer performs exactly this check and refuses to run if it fails, so a
-mismatch here means the binary or the config is wrong.
+**Genesis cannot do this.** ECX inherits Bitcoin's genesis block byte for byte
+and reports `chain: "main"`, so neither distinguishes it from a Bitcoin node.
+The fork block can, because the fork resets difficulty. The indexer performs
+exactly this check and refuses to run if it fails, so a mismatch means the
+binary or the config is wrong — most likely a stock Bitcoin Core binary.
+
+Until the node passes height 973,728 the indexer will decline with "node is at
+height N, below the ECX fork", which is a "come back later", not an error.
+
+### Confirm the data the indexer needs
+
+Verbosity 3 must supply per-transaction fees and prevout values, since that is
+what fee attribution reads:
 
 ```bash
-# 2. Does verbosity 3 still carry fees and prevouts on a snapshot-synced node?
-#    This is the one unproven assumption in this runbook. Verbosity 3 reads
-#    prevouts from block undo data, which exists only for blocks the node
-#    actually connected.
-ec getblock $(ec getblockhash $(( $(ec getblockcount) - 1 ))) 3 \
-  | python3 -c 'import json,sys; b=json.load(sys.stdin); t=[x for x in b["tx"] if "fee" in x]; print("txs:",len(b["tx"]),"with fee:",len(t)); print("prevout ok:", any("prevout" in v for x in b["tx"][1:2] for v in x.get("vin",[])))'
+ec getblock $(ec getblockhash 300000) 3 \
+  | python3 -c 'import json,sys; b=json.load(sys.stdin); print("txs:",len(b["tx"]),"with fee:",len([t for t in b["tx"] if "fee" in t]))'
 ```
 
-If `with fee: 0`, **stop** — the indexer will silently attribute 0 sats to every
-bid and the dashboard will under-report fees rather than fail loudly. Fix the
-node (unpruned range, finished undo data) before indexing.
+Verified on `ecash-v1.2.0-core32.1`: block 300,000 gives `txs: 237 with fee: 236`
+(the coinbase has none) and prevout values present. If `with fee` comes back 0,
+**stop** — the indexer would silently attribute 0 sats to every bid and the site
+would under-report rather than fail.
 
 ## 6. Deploy the app
 
@@ -422,8 +443,13 @@ systemctl list-timers ecashmeter-index.timer
 # is the data fresh? 503 = stale, empty, or parser mismatch
 curl -s https://example.com/api/health | python3 -m json.tool
 
-# is history still backfilling behind the snapshot?
-bitcoin-cli -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash getchainstates
+# is the node still catching up? watch verificationprogress, not blocks
+bitcoin-cli -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash \
+  getblockchaininfo | grep -E "blocks|headers|verificationprogress|pruned|size_on_disk"
+
+# back up the store — under pruning it is no longer rebuildable from the node
+sudo -u ecashmeter sqlite3 /var/lib/ecashmeter/ecash-meter.sqlite \
+  ".backup '/var/backups/ecashmeter/ecash-meter-$(date +%F).sqlite'"
 ```
 
 Point an uptime monitor at `/api/health` and alert on non-200. It returns 503

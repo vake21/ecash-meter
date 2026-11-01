@@ -260,7 +260,17 @@ export async function runIndexer(deps: IndexerDeps): Promise<IndexerResult> {
     let ancestorHash: string | null;
     if (!hasData) {
       // Fresh backfill: no stored history to reconcile against.
-      commonAncestor = Math.max(0, nodeTip - backfill + 1) - 1;
+      //
+      // The floor is ECX_FORK_HEIGHT, never lower, for a correctness reason
+      // rather than an efficiency one. Blocks below the fork are Bitcoin blocks
+      // in which BIP 300/301 is not active, so a coinbase OP_RETURN there that
+      // happens to match the BMM pattern is NOT a drivechain commitment — it is
+      // a false positive, and counting it would invent sidechain activity in
+      // Bitcoin's history. Clamping also keeps ECASH_BACKFILL_BLOCKS meaningful
+      // as the chain grows: a fixed depth that reaches past the fork today will
+      // not next year, and over-sizing it is then free.
+      const floor = Math.max(ECX_FORK_HEIGHT, nodeTip - backfill + 1);
+      commonAncestor = floor - 1;
       ancestorHash = null;
     } else {
       const found = await findCommonAncestor(rpc, localTip!, nodeTip, minLocal!);
