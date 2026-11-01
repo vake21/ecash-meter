@@ -6,8 +6,14 @@ Caddy for TLS. Target domain: **example.com**.
 > **Status.** The unit files, Caddy config, hardening and app deployment steps
 > below were verified end to end on a real box. The **eCash mainnet node steps
 > (3 and 5) have not been** — the previous deployment ran a different, far
-> smaller chain. Treat the disk sizing and the assumeutxo flow as carefully
-> reasoned but unproven, and run the checks in step 5 rather than trusting them.
+> smaller chain. Treat the disk sizing as carefully reasoned but unproven.
+>
+> One thing that WAS since verified against a real eCash node
+> (`ecash-v1.2.0-core32.1`): `getblock <hash> 3` supplies per-transaction `fee`
+> and `vin[].prevout.value`, which is what the fee attribution depends on. Block
+> 300,000 returned 237 transactions, 236 carrying `fee` (the coinbase correctly
+> has none) and prevout values present. So the indexer's core assumption holds on
+> this build; the remaining unknowns are operational, not about the RPC.
 
 ## What runs here, and what doesn't
 
