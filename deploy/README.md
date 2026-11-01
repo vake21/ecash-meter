@@ -181,6 +181,70 @@ the distro codename.
 
 ---
 
+## 0. Rehearse against a local node first
+
+The VPS sync takes days. Finding a problem there, after waiting days, is the
+expensive way to learn it — so point the indexer at a local ECX node first and
+prove the pipeline end to end. Everything below needs a node synced **past the
+fork at 973,728**; before that the indexer correctly declines with "node is at
+height N, below the ECX fork".
+
+Local nodes use cookie auth by default, and `lib/rpc.ts` speaks basic auth, which
+is the same thing — Core's cookie file *is* a credential pair. In `.env.local`:
+
+```bash
+D=/path/to/your/ecash/datadir
+ECASH_SOURCE=db
+ECASH_METER_DB=.data/rehearsal.sqlite
+ECASH_RPC_URL=http://127.0.0.1:8532          # 18302 under BitWindow
+ECASH_RPC_USER=$(cut -d: -f1  "$D/.cookie")  # literally __cookie__
+ECASH_RPC_PASS=$(cut -d: -f2- "$D/.cookie")
+ECASH_BACKFILL_BLOCKS=20000                  # clamps to the fork anyway
+ECASH_INDEX_CHUNK=100                        # smaller chunks on a laptop
+```
+
+Then:
+
+```bash
+npm run index
+```
+
+Check each of these, because each covers something only unit tests have seen:
+
+| Check | What it proves |
+|---|---|
+| It does not refuse with `network-mismatch` | the fork-block identity check passes against a real node |
+| First run reports `from` = 973728 | the backfill clamps to the fork, not below it |
+| It logs `indexed to N of M` several times | chunked commits are working on real, heavy blocks |
+| `npm run index` again → `up to date` | incremental resume works |
+| Store has commitments with `fee_sats > 0` | fee attribution survives real mainnet blocks |
+
+```bash
+sqlite3 .data/rehearsal.sqlite \
+  "SELECT slot, COUNT(*) commitments, SUM(fee_sats) sats
+     FROM commitments GROUP BY slot ORDER BY sats DESC;"
+```
+
+Cross-check the result against a block explorer before trusting it. As of
+2026-11-01 ECX had exactly one merge-mined slot — 46 — with 73 commitments from
+block 979,277 onward, and bids paying on the order of 378 sats, so a plausible
+result is a single row. A row for a slot the explorer does not show, or a wildly
+different total, means the parser and the chain disagree and the deploy should
+wait.
+
+Finally render it:
+
+```bash
+ECASH_METER_DB=.data/rehearsal.sqlite npm run dev
+curl -s localhost:3000/api/health | python3 -m json.tool   # expect "status": "ok"
+```
+
+Health must report `"network": "ecx"` and a `chain.stored` equal to
+`chain.expected`. Then delete `.data/rehearsal.sqlite` — the deployed store is
+built on the server.
+
+---
+
 ## 1. DNS at Namecheap
 
 Domain List → **example.com** → Manage → Advanced DNS. **Delete the default
