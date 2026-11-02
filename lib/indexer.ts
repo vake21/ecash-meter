@@ -154,7 +154,17 @@ export async function runIndexer(deps: IndexerDeps): Promise<IndexerResult> {
     Number(
       process.env.ECASH_BACKFILL_BLOCKS ?? process.env.ECASH_SCAN_BLOCKS ?? 432,
     );
-  const concurrency = deps.concurrency ?? 24;
+  // Concurrent RPC requests. Keep this BELOW the node's `rpcthreads` (default
+  // 10), or heavy calls starve the light ones: 24 parallel verbosity-3
+  // `getblock` calls — each serializing a multi-megabyte block with every
+  // prevout inlined — occupy every RPC thread long enough that a trivial
+  // `getblockhash` queued behind them exceeds ECASH_RPC_TIMEOUT_MS and the run
+  // aborts. Observed against a local node on real mainnet blocks; it never
+  // surfaced on a chain whose blocks were nearly empty.
+  const concurrency = Math.max(
+    1,
+    deps.concurrency ?? Number(process.env.ECASH_RPC_CONCURRENCY ?? 8),
+  );
   const chunkSize = Math.max(
     1,
     deps.chunkSize ?? Number(process.env.ECASH_INDEX_CHUNK ?? 250),

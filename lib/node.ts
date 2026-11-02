@@ -24,7 +24,9 @@ const SOURCE = (
 
 // How many recent L1 blocks to scan per live snapshot (env-tunable). ~144/day.
 const SCAN_BLOCKS = Number(process.env.ECASH_SCAN_BLOCKS ?? 432);
-const CONCURRENCY = 24;
+// Keep below the node's `rpcthreads` (default 10) — see the note in
+// lib/indexer.ts. Over-subscribing starves light calls behind heavy ones.
+const CONCURRENCY = Math.max(1, Number(process.env.ECASH_RPC_CONCURRENCY ?? 8));
 const CACHE_TTL_MS = 60_000;
 
 let cache: { at: number; data: DashboardData } | null = null;

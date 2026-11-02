@@ -140,8 +140,11 @@ which is cheap here for two reasons specific to this workload:
 | blocks + undo at `prune=40000` | 40 GB |
 | headroom | ~15 GB |
 
-40 GB of blocks is roughly four to five months at Bitcoin-sized blocks, against a
-30-day display window.
+Measured against ECX on 2026-11-02 rather than assumed: ~614 blocks/day
+(141 s/block) averaging 0.61 MB, so ~0.4 GB/day. 40 GB holds **~107 days**
+against a 30-day display window. ECX runs faster than Bitcoin because the fork
+reset difficulty, and the rate is still falling as difficulty settles, so that
+horizon only grows. A 30-day window itself needs only ~11 GB.
 
 **The sync still downloads the whole chain** — pruning deletes as it goes — so
 budget bandwidth, not disk. Hetzner includes 20 TB. Expect days, not hours, on a
@@ -208,6 +211,11 @@ ECASH_RPC_PASS=$(cut -d: -f2- "$D/.cookie")
 ECASH_BACKFILL_BLOCKS=20000                  # clamps to the fork anyway
 ECASH_INDEX_CHUNK=100                        # smaller chunks on a laptop
 ```
+
+**The cookie rotates on every node restart**, so if you restart the node
+mid-rehearsal, re-read `.cookie` or the next run fails with `HTTP 401
+Unauthorized`. The deployed box uses a static `rpcauth` instead, so this only
+bites locally.
 
 Then:
 
@@ -454,11 +462,30 @@ systemctl start ecashmeter-index.service
 journalctl -u ecashmeter-index -n 20 --no-pager -o cat
 ```
 
-The first run backfills `ECASH_BACKFILL_BLOCKS` (10,000 by default, reaching back
-past the fork) in chunks of `ECASH_INDEX_CHUNK`, logging `indexed to N of M` as it
-goes. These are real mainnet blocks at verbosity 3, so expect minutes, not the
-sub-second runs a tiny chain gives. If it refuses with a chain-identity or
-parser-version message, it is telling you exactly what to fix.
+The first run backfills from the fork (the floor clamps to 973,728) in chunks of
+`ECASH_INDEX_CHUNK`, logging `indexed to N of M`. These are real mainnet blocks
+at verbosity 3 — a few hundred MB of JSON per chunk — so budget **tens of
+minutes**, not the sub-second runs a tiny chain gives. If it refuses with a
+chain-identity or parser-version message, it is telling you exactly what to fix.
+
+### Two settings that will otherwise time the backfill out
+
+Both were learned the hard way against a real node, and both are about the
+NODE's behaviour rather than the indexer's:
+
+- **Keep `dbcache` modest.** A large UTXO cache only helps during IBD. Afterwards
+  it is a liability: an oversized cache (`Cache size … exceeds total space` in
+  `debug.log`) forces repeated full flushes, and flushing gigabytes to slow
+  storage stalls *all* RPC for tens of seconds. A trivial `getblockhash` went
+  from 15 ms to over 30 s this way, aborting the backfill. `deploy/ecash.conf`
+  leaves `dbcache` unset so the node's own default applies.
+- **Give `ECASH_RPC_TIMEOUT_MS` real headroom** — 120000 rather than the 30000
+  default. Even a well-tuned node legitimately pauses to flush, and the backfill
+  should ride that out instead of dying.
+
+`ECASH_RPC_CONCURRENCY` (default 8) should stay below the node's `rpcthreads`
+(default 10). Note that over-subscription was *not* what caused the timeouts
+above — `dbcache` was — so raising concurrency is not the fix if you see stalls.
 
 ```bash
 systemctl enable --now ecashmeter.service
