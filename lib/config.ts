@@ -69,8 +69,9 @@ export const ECX_GENESIS_HASH =
 // those three from 7.1 to 16.4.
 //
 // KNOWN LIMIT: the legend and table show every active chain together, so *every*
-// pair matters there, and four of these are under the floor (BitNames/Photon
-// 9.8, BitAssets/Truthcoin 10.6, BitAssets/Elements 11.6, Thunder/zSide 11.9).
+// pair matters there, and several are under the floor (BitNames/Photon 9.8,
+// Flush/Thunder 10.5, BitAssets/Truthcoin 10.6, BitAssets/Elements 11.6,
+// Thunder/zSide 11.9). Flush is not the weakest link in either dimension.
 // This is inherent to eight series, not a tuning miss: a search over the whole
 // feasible OKLCh space finds sets that clear normal-vision all-pairs at ΔE 17.6,
 // but every one of them collapses under CVD (best found: ΔE 1.4 deutan). Chain
@@ -112,6 +113,13 @@ export const KNOWN_DRIVECHAINS: Drivechain[] = [
     ticker: "ELEM",
     description: "Blockstream Elements, enabling Simplicity script",
     color: "#d55181",
+  },
+  {
+    slot: 46,
+    name: "Flush",
+    ticker: "FLSH",
+    description: "No published description yet",
+    color: "#00a8b9",
   },
   {
     slot: 98,
