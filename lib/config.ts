@@ -46,11 +46,19 @@ export const ECX_GENESIS_HASH =
 // A slot with no entry here still renders — see drivechainForSlot() — because a
 // hardcoded slate must never be able to hide real on-chain activity.
 //
-// Refresh this table from the network registry at https://drivechain.dev/config
-// (each network's `sidechains[]`), or from a node's
-// ValidatorService.GetSidechains. ECX mainnet's registry entry currently lists
-// no sidechains, so these are the ecosystem's published slot assignments rather
-// than a confirmed ECX slate.
+// Refresh this table from a node's enforcer —
+// `grpcurl -plaintext -d '{}' 127.0.0.1:50051 \
+//    cusf.mainchain.v1.ValidatorService/GetSidechains`
+// — which returns each registered slot's name and description. (The public
+// catalog at https://drivechain.dev/config lists no sidechains for ECX, so the
+// enforcer is the authoritative source.)
+//
+// Read from a live ECX enforcer on 2026-11-03, ECX mainnet has FIVE registered
+// slots: 9 Thunder, 24 Elements+, 46 Flush, 130 FreeBank, 131 Tally. Those
+// entries' names and descriptions come from that call. The remaining entries
+// (2, 4, 98, 99, 255) are NOT registered on ECX; they are kept because the
+// table is only a lookup — an unregistered slot can never appear in the data,
+// and if one registers later its colour is already validated.
 //
 // Series colours are a validated categorical palette for a DARK surface,
 // assigned to slots in fixed ascending order and never cycled or reassigned by
@@ -70,8 +78,10 @@ export const ECX_GENESIS_HASH =
 //
 // KNOWN LIMIT: the legend and table show every active chain together, so *every*
 // pair matters there, and several are under the floor (BitNames/Photon 9.8,
-// Flush/Thunder 10.5, BitAssets/Truthcoin 10.6, BitAssets/Elements 11.6,
-// Thunder/zSide 11.9). Flush is not the weakest link in either dimension.
+// Tally/Elements+ 9.9, Flush/Thunder 10.5, BitAssets/Truthcoin 10.6 and
+// FreeBank/Truthcoin 10.6, BitAssets/Elements+ 11.6, Thunder/zSide 11.9).
+// Eleven series cannot all separate on a dark surface; none of the three new
+// entries is the weakest link, and the floor is still the original 9.8.
 // This is inherent to eight series, not a tuning miss: a search over the whole
 // feasible OKLCh space finds sets that clear normal-vision all-pairs at ΔE 17.6,
 // but every one of them collapses under CVD (best found: ΔE 1.4 deutan). Chain
@@ -109,9 +119,10 @@ export const KNOWN_DRIVECHAINS: Drivechain[] = [
   },
   {
     slot: 24,
-    name: "Elements",
+    name: "Elements+",
     ticker: "ELEM",
-    description: "Blockstream Elements, enabling Simplicity script",
+    description:
+      "Confidential transactions and assets, with BIP 300/301 deposits and withdrawals",
     color: "#d55181",
   },
   {
@@ -134,6 +145,20 @@ export const KNOWN_DRIVECHAINS: Drivechain[] = [
     ticker: "PHO",
     description: "Sidechain using post-quantum cryptography",
     color: "#9085e9",
+  },
+  {
+    slot: 130,
+    name: "FreeBank",
+    ticker: "FBNK",
+    description: "Credit-creation drivechain, in the Scottish free-banking lineage",
+    color: "#8f7905",
+  },
+  {
+    slot: 131,
+    name: "Tally",
+    ticker: "TLLY",
+    description: "Signed records that move money and ownership (spec only so far)",
+    color: "#d563c5",
   },
   {
     slot: 255,

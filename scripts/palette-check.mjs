@@ -16,8 +16,9 @@
 import { readFileSync } from "node:fs";
 
 const BG = "#0a0a0a";            // page background (bg-neutral-950)
-const ADJ_NORMAL_FLOOR = 15;     // design goal for on-screen neighbours
-const ADJ_CVD_FLOOR = 8.4;       // measured baseline before Flush was added
+const ADJ_NORMAL_FLOOR = 15;     // design goal for on-screen neighbours (set is at 17.6)
+const ADJ_CVD_FLOOR = 8.8;       // just under the measured baseline (Thunder/Truthcoin
+                                 // protan, ~8.89) so float noise cannot trip the gate
 const CONTRAST_FLOOR = 3.0;
 
 const hex2rgb = (h) => {
