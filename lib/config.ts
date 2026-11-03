@@ -118,7 +118,7 @@ export const KNOWN_DRIVECHAINS: Drivechain[] = [
     slot: 46,
     name: "Flush",
     ticker: "FLSH",
-    description: "No published description yet",
+    description: "Tokens, assets and a DEX on a fast chain over eCash",
     color: "#00a8b9",
   },
   {
