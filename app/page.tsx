@@ -45,7 +45,10 @@ export default async function Home() {
     ...(!isBmm ? [{ metric: "fees" as const, title: "Fees fed to L1" }] : []),
     { metric: "bmm", title: "BMM blocks" },
     ...(showTreasury
-      ? [{ metric: "treasury" as const, title: "ECX held" }]
+      ? [
+          { metric: "treasury" as const, title: "ECX held" },
+          { metric: "flows" as const, title: "Deposits and withdrawals" },
+        ]
       : []),
   ];
   // The table is ordered by ECX custodied, largest first, so it re-sorts itself
@@ -55,7 +58,12 @@ export default async function Home() {
   const legendChains = stats
     .filter((r) =>
       r.series.some(
-        (p) => p.bmmCount > 0 || p.feeSats > 0 || (p.treasurySats ?? 0) > 0,
+        (p) =>
+          p.bmmCount > 0 ||
+          p.feeSats > 0 ||
+          (p.treasurySats ?? 0) > 0 ||
+          (p.depositSats ?? 0) > 0 ||
+          (p.withdrawalSats ?? 0) > 0,
       ),
     )
     .map((r) => r.chain);
@@ -238,7 +246,7 @@ export default async function Home() {
           )}
         </section>
 
-        {/* charts — side by side, same dates on every x-axis, same colour per
+        {/* charts — a 2×2 grid, same dates on every x-axis, same colour per
             drivechain, one shared legend */}
         <section className="mb-10">
           <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
@@ -247,11 +255,8 @@ export default async function Home() {
             </h2>
             <ChartLegend chains={legendChains} />
           </div>
-          <div
-            className={`grid gap-5 ${
-              charts.length === 3 ? "lg:grid-cols-3" : "md:grid-cols-2"
-            }`}
-          >
+          {/* 2×2 on wide screens; one column on narrow ones. */}
+          <div className="grid gap-5 md:grid-cols-2">
             {charts.map((c) => (
               <ChartPanel key={c.metric} title={c.title}>
                 <FeeChart

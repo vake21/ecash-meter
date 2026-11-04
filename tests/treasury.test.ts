@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { parseTreasury, type RawBlock, type RawTx } from "../lib/bmm";
 import {
   dailyBalances,
+  dailyFlows,
   replayTreasury,
   replayTreasuryHistory,
   type TreasuryOutputRow,
@@ -190,4 +191,31 @@ test("dailyBalances counts changes from before the window", () => {
     dailyBalances([{ height: 1, valueSats: 9 }], () => before, ["2026-11-01", "2026-11-02"], toDate),
     [9, 9],
   );
+});
+
+test("dailyFlows splits balance changes into deposits and withdrawals", () => {
+  const t0 = Date.UTC(2026, 10, 1) / 1000; // 2026-11-01
+  const DAY = 86_400;
+  const times = new Map([
+    [1, t0 - 30 * DAY], // before the window: sets the balance, not counted
+    [2, t0 + 60], // 11-01 deposit +4
+    [3, t0 + 120], // 11-01 deposit +1
+    [4, t0 + DAY + 5], // 11-02 withdrawal −3
+    [5, t0 + 2 * DAY], // 11-03 emptied −7
+  ]);
+  const toDate = (u: number) => new Date(u * 1000).toISOString().slice(0, 10);
+  const { deposits, withdrawals } = dailyFlows(
+    [
+      { height: 1, valueSats: 5 },
+      { height: 2, valueSats: 9 },
+      { height: 3, valueSats: 10 },
+      { height: 4, valueSats: 7 },
+      { height: 5, valueSats: 0 },
+    ],
+    (h) => times.get(h),
+    ["2026-11-01", "2026-11-02", "2026-11-03"],
+    toDate,
+  );
+  assert.deepEqual(deposits, [5, 0, 0]);
+  assert.deepEqual(withdrawals, [0, 3, 7]);
 });

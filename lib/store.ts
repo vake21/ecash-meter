@@ -19,6 +19,7 @@ import { finalizeStats } from "./aggregate";
 import { utcDate } from "./bmm";
 import {
   dailyBalances,
+  dailyFlows,
   replayTreasuryHistory,
   type TreasuryOutputRow,
   type TreasurySpendRow,
@@ -168,21 +169,24 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
   };
   const stats: DrivechainStats[] = resolveDrivechains(observedSlots).map((chain) => {
     const byDate = tally.get(chain.slot);
-    // End-of-day treasury balances, only where the balance is known.
-    const balances =
-      treasuryOf(chain.slot) != null
-        ? dailyBalances(
-            history.get(chain.slot) ?? [],
-            (h) => timeByHeight.get(h),
-            dates,
-            utcDate,
-          )
-        : undefined;
+    // End-of-day treasury balances and daily deposits/withdrawals, only where
+    // the balance is known (a store that misses part of the history would
+    // misread the first change it sees as one big deposit).
+    const known = treasuryOf(chain.slot) != null;
+    const changes = history.get(chain.slot) ?? [];
+    const heightTime = (h: number) => timeByHeight.get(h);
+    const balances = known
+      ? dailyBalances(changes, heightTime, dates, utcDate)
+      : undefined;
+    const flows = known ? dailyFlows(changes, heightTime, dates, utcDate) : undefined;
     const series: FeePoint[] = dates.map((date, i) => ({
       date,
       bmmCount: byDate?.get(date)?.bmm ?? 0,
       feeSats: byDate?.get(date)?.fee ?? 0,
       ...(balances ? { treasurySats: balances[i] } : {}),
+      ...(flows
+        ? { depositSats: flows.deposits[i], withdrawalSats: flows.withdrawals[i] }
+        : {}),
     }));
     const bmmCommitments = series.reduce((s, p) => s + p.bmmCount, 0);
     const totalFeesSats = series.reduce((s, p) => s + p.feeSats, 0);

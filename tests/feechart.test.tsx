@@ -69,7 +69,7 @@ test("a populated series renders the chart (svg), not the empty state", () => {
 const renderAs = (
   stats: DrivechainStats[],
   windowDays: number,
-  metric: "fees" | "bmm" | "treasury",
+  metric: "fees" | "bmm" | "treasury" | "flows",
 ) =>
   renderToStaticMarkup(React.createElement(FeeChart, { stats, windowDays, metric }));
 
@@ -96,4 +96,39 @@ test("bmm metric tooltips count BMM blocks", () => {
   const series: FeePoint[] = [{ date: "2026-11-03", bmmCount: 1, feeSats: 0 }];
   const html = renderAs([statWith(9, series)], 1, "bmm");
   assert.match(html, /C9 — 2026-11-03 — 1 BMM block</);
+});
+
+test("flows metric draws withdrawals below a labelled zero line", () => {
+  const series: FeePoint[] = [
+    { date: "2026-11-01", bmmCount: 0, feeSats: 0, depositSats: 100_000_000, withdrawalSats: 0 },
+    { date: "2026-11-02", bmmCount: 0, feeSats: 0, depositSats: 0, withdrawalSats: 50_000_000 },
+  ];
+  const html = renderAs([statWith(9, series)], 2, "flows");
+  assert.match(html, /C9 — 2026-11-01 — 1\.0000 ECX deposited/);
+  assert.match(html, /C9 — 2026-11-02 — 0\.5000 ECX withdrawn/);
+  assert.match(html, />0<\/text>/, "zero line is labelled");
+  assert.match(html, />−0\.50 ECX<\/text>/, "withdrawal ticks are negative");
+  // The withdrawal bar starts at or below the zero line, never above it.
+  const zeroY = Number(/<line[^>]*y1="([\d.]+)"[^>]*stroke="#525252"/.exec(html)![1]);
+  const wY = Number(/<rect[^>]*y="([\d.]+)"[^>]*><title>C9 — 2026-11-02/.exec(html)![1]);
+  assert.ok(wY >= zeroY, `withdrawal y ${wY} should be >= zero line ${zeroY}`);
+});
+
+test("flows metric with deposits only has no zero-line split", () => {
+  const series: FeePoint[] = [
+    { date: "2026-11-01", bmmCount: 0, feeSats: 0, depositSats: 1_000_000, withdrawalSats: 0 },
+  ];
+  const html = renderAs([statWith(9, series)], 1, "flows");
+  assert.doesNotMatch(html, /stroke="#525252"/);
+  assert.doesNotMatch(html, /<title>[^<]*withdrawn/);
+});
+
+test("small coin-scale axes print distinct ticks", () => {
+  // Max 0.01 ECX → ticks 0.0025 apart; 2 fixed decimals printed 0.01 thrice.
+  const series: FeePoint[] = [
+    { date: "2026-11-01", bmmCount: 0, feeSats: 0, treasurySats: 1_000_000 },
+  ];
+  const html = renderAs([statWith(9, series)], 1, "treasury");
+  const ticks = [...html.matchAll(/font-size="11">([^<]*ECX)<\/text>/g)].map((m) => m[1]);
+  assert.deepEqual(ticks, ["0.0025 ECX", "0.0050 ECX", "0.0075 ECX", "0.0100 ECX"]);
 });

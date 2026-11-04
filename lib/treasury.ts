@@ -169,3 +169,36 @@ export function dailyBalances(
     return balance;
   });
 }
+
+/**
+ * ECX deposited and withdrawn on each of `dates`, from a slot's balance
+ * changes. A treasury only moves through deposits (M5) and withdrawals (M6),
+ * so a rise in balance is a deposit and a fall is a withdrawal, each the size
+ * of the change. Changes before the window still set the running balance but
+ * are not counted.
+ *
+ * On ECX a deposit arrives in two transactions — a loose treasury-script output,
+ * then a merge that spends it with the current treasury. Only the merge changes
+ * the balance, so each deposit is counted once, at the merge.
+ */
+export function dailyFlows(
+  changes: BalanceChange[],
+  timeOfHeight: (height: number) => number | undefined,
+  dates: string[],
+  toDate: (unixSeconds: number) => string,
+): { deposits: number[]; withdrawals: number[] } {
+  const index = new Map(dates.map((d, i) => [d, i]));
+  const deposits = dates.map(() => 0);
+  const withdrawals = dates.map(() => 0);
+  let balance = 0;
+  for (const c of changes) {
+    const delta = c.valueSats - balance;
+    balance = c.valueSats;
+    const t = timeOfHeight(c.height);
+    const i = t == null ? undefined : index.get(toDate(t));
+    if (i == null) continue;
+    if (delta > 0) deposits[i] += delta;
+    else if (delta < 0) withdrawals[i] -= delta;
+  }
+  return { deposits, withdrawals };
+}

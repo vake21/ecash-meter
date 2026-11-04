@@ -207,6 +207,9 @@ test("treasury balance comes from the replayed treasury chain", async () => {
   // Daily series carries the end-of-day balance for charting.
   const last = bySlot.get(46)!.series.at(-1)!;
   assert.equal(last.treasurySats, 3_000_000);
+  // Both treasury changes land on the last day: +1,000,000 then +2,000,000.
+  assert.equal(last.depositSats, 3_000_000);
+  assert.equal(last.withdrawalSats, 0);
   assert.equal(bySlot.get(130)!.series.at(-1)!.treasurySats, 0);
 });
 
@@ -216,7 +219,14 @@ test("treasury is unknown, not zero, when the store starts after activation", as
   for (const s of data.stats.filter((r) => r.activated)) {
     assert.equal(s.treasurySats, null, `slot ${s.chain.slot}`);
     // Unknown balances are never charted as 0.
-    assert.ok(s.series.every((p) => p.treasurySats === undefined));
+    assert.ok(
+      s.series.every(
+        (p) =>
+          p.treasurySats === undefined &&
+          p.depositSats === undefined &&
+          p.withdrawalSats === undefined,
+      ),
+    );
   }
   assert.equal(data.totalTreasurySats, null);
   // A slot that isn't activated has no treasury figure at all.

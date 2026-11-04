@@ -52,6 +52,10 @@ export interface FeePoint {
    * Absent when the source doesn't track treasuries or the balance is unknown.
    */
   treasurySats?: number;
+  /** ECX deposited into the sidechain's treasury that day, sats (same rules). */
+  depositSats?: number;
+  /** ECX withdrawn from the sidechain's treasury that day, sats (same rules). */
+  withdrawalSats?: number;
 }
 
 /** Rolled-up stats for one drivechain over the tracked window. */

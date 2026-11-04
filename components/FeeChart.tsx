@@ -1,5 +1,6 @@
 import type { DrivechainStats, FeePoint } from "@/lib/types";
 import type { Drivechain } from "@/lib/types";
+import { SATS_PER_COIN } from "@/lib/config";
 import {
   feeFormatter,
   formatCoins,
@@ -8,7 +9,7 @@ import {
   formatSatsCompact,
 } from "@/lib/format";
 
-export type ChartMetric = "fees" | "bmm" | "treasury";
+export type ChartMetric = "fees" | "bmm" | "treasury" | "flows";
 
 /** Per-metric wording, so the three charts share one geometry. */
 const COPY: Record<
@@ -27,6 +28,12 @@ const COPY: Record<
     emptyTitle: "No BMM commitments were found in the indexed window.",
     emptyBody: "The indexer has blocks, but none carried drivechain commitments over",
   },
+  flows: {
+    aria: "ECX deposited into and withdrawn from each drivechain each day",
+    caption: "ECX deposited (above the line) and withdrawn (below) each day",
+    emptyTitle: "No deposits or withdrawals in the indexed window.",
+    emptyBody: "No sidechain treasury changed over",
+  },
   treasury: {
     aria: "ECX held in each drivechain's L1 treasury at the end of each day",
     caption: "ECX held at the end of each day",
@@ -40,7 +47,8 @@ interface Props {
   windowDays: number;
   /**
    * Which series value to plot: "fees" = sats paid to L1 that day, "bmm" =
-   * commitment counts that day, "treasury" = ECX held at the end of that day.
+   * commitment counts that day, "treasury" = ECX held at the end of that day,
+   * "flows" = ECX deposited (up) and withdrawn (down) that day.
    */
   metric: ChartMetric;
   /**
@@ -50,12 +58,12 @@ interface Props {
   showLegend?: boolean;
 }
 
-// Chart geometry (viewBox units). Sized for a ~third-width panel: the SVG
-// scales to its container, so a canvas this size keeps 11-unit text at roughly
-// 9.5px on screen. (At the old 720-wide canvas, a third-width panel shrank the
-// axis text to ~4px.)
-const W = 360;
-const H = 220;
+// Chart geometry (viewBox units). Sized for a half-width panel in the 2×2
+// grid: the SVG scales to its container (~500px there), so 11-unit text lands
+// near 10.5px on screen. The canvas is sized to the panel rather than shrunk
+// into it — a 720-wide canvas in a third-width panel once rendered ~4px text.
+const W = 520;
+const H = 240;
 const FONT = 11;
 const padL = 4;
 // Right gutter holds the gridline labels OUTSIDE the plot. Inside it, they
@@ -71,10 +79,16 @@ const SEG_GAP = 2; // between stacked segments, so adjacent fills never touch
 const SEG_RADIUS = 1.5;
 
 // Stacked bar chart: one bar per day, each segment one drivechain's value that
-// day — fees fed to L1, BMM blocks, or ECX held at day's end (a balance, so the
-// bar's height is the total held by all drivechains). Pure SVG, no chart
-// dependency, SSR. All three metrics share the geometry, palette and stack
-// order, so the charts read as one system.
+// day — fees fed to L1, BMM blocks, ECX held at day's end (a balance, so the
+// bar's height is the total held by all drivechains), or ECX deposited and
+// withdrawn. Pure SVG, no chart dependency, SSR. Every metric shares the
+// geometry, palette and stack order, so the charts read as one system.
+//
+// Each metric supplies an UP and a DOWN value per chain per day. Only "flows"
+// has a down side (withdrawals); for the rest it is 0 and the zero line sits on
+// the floor, exactly as a plain stacked bar chart. When withdrawals exist the
+// zero line rises to split the plot in proportion to the largest up and down
+// days, and withdrawals stack downward in the same chain colours.
 export default function FeeChart({
   stats,
   windowDays,
@@ -82,17 +96,21 @@ export default function FeeChart({
   showLegend = true,
 }: Props) {
   const dates = stats[0]?.series.map((p) => p.date) ?? [];
-  const value = (p: FeePoint | undefined) =>
+  const up = (p: FeePoint | undefined): number =>
     metric === "bmm"
       ? (p?.bmmCount ?? 0)
       : metric === "treasury"
         ? (p?.treasurySats ?? 0)
-        : (p?.feeSats ?? 0);
+        : metric === "flows"
+          ? (p?.depositSats ?? 0)
+          : (p?.feeSats ?? 0);
+  const down = (p: FeePoint | undefined): number =>
+    metric === "flows" ? (p?.withdrawalSats ?? 0) : 0;
   const copy = COPY[metric];
   // Total of the values we'd actually plot (from the series), so the empty-state
   // decision matches what the chart would draw.
   const windowTotal = stats.reduce(
-    (sum, st) => sum + st.series.reduce((s, p) => s + value(p), 0),
+    (sum, st) => sum + st.series.reduce((s, p) => s + up(p) + down(p), 0),
     0,
   );
 
@@ -120,38 +138,69 @@ export default function FeeChart({
   // Chains with nothing to plot in the window (activated but idle) are left out
   // of the stack and the legend; the table still lists them.
   const stacked = stats
-    .filter((st) => st.series.some((p) => value(p) > 0))
+    .filter((st) => st.series.some((p) => up(p) > 0 || down(p) > 0))
     .sort((a, b) => a.chain.slot - b.chain.slot);
 
-  // Daily total across all chains, for y-axis scaling.
-  const dailyTotals = dates.map((_, i) =>
-    stats.reduce((s, st) => s + value(st.series[i]), 0),
-  );
-  const maxDaily = Math.max(...dailyTotals, 1);
+  // Largest daily stack on each side of the zero line, for y-axis scaling.
+  const dailyMax = (f: (p: FeePoint | undefined) => number) =>
+    Math.max(0, ...dates.map((_, i) => stats.reduce((s, st) => s + f(st.series[i]), 0)));
+  const maxUp = dailyMax(up);
+  const maxDown = dailyMax(down);
+  const range = Math.max(maxUp + maxDown, 1);
+  const zeroY = padT + plotH * (maxUp / range);
+  const toH = (v: number) => (v / range) * plotH;
+  // Unit choice (sats vs coins) keys off the larger side.
+  const maxDaily = Math.max(maxUp, maxDown, 1);
 
   // Pick the fee unit ONCE from the largest daily total so all four gridlines
   // share it. Scaling to maxDaily means a satoshi-scale window still draws
   // full-height bars; without this the ticks would all read "0 BTC" beside them.
   const formatFee = feeFormatter(maxDaily);
-  const formatValue = (v: number) =>
+  const formatValue = (v: number, side: "up" | "down" = "up") =>
     metric === "bmm"
       ? `${formatInt(Math.round(v))} BMM block${v === 1 ? "" : "s"}`
       : metric === "treasury"
         ? formatCoins(v, 4) // exact holdings in the tooltip; the axis rounds
-        : formatFee(v);
+        : metric === "flows"
+          ? side === "up"
+            ? `${formatCoins(v, 4)} deposited`
+            : `${formatCoins(v, 4)} withdrawn`
+          : formatFee(v);
   // Axis ticks use compact numbers ("154K sats", "4.62 ECX") to fit the gutter.
-  const formatAxisFee = feeFormatter(maxDaily, formatCoinsCompact, formatSatsCompact);
-  const axisLabel = (v: number) =>
-    metric === "bmm" ? formatInt(Math.round(v)) : formatAxisFee(v);
+  // Coin ticks carry enough decimals to tell neighbouring ticks apart: at a max
+  // of 0.01 ECX the ticks are 0.0025 apart, and a fixed 2 decimals printed
+  // "0.01 ECX" three times.
+  const formatAxisFee = feeFormatter(
+    maxDaily,
+    axisCoinFormatter(maxDaily / 4),
+    formatSatsCompact,
+  );
+  const axisLabel = (v: number) => {
+    const text =
+      metric === "bmm" ? formatInt(Math.round(Math.abs(v))) : formatAxisFee(Math.abs(v));
+    return v < 0 ? `−${text}` : text;
+  };
 
   const n = dates.length;
   const barW = plotW / n - BAR_GAP;
 
-  // Gridlines at 25/50/75/100% of max.
-  const gridYs = [0.25, 0.5, 0.75, 1].map((f) => ({
-    f,
-    y: padT + plotH * (1 - f),
-  }));
+  // Gridlines: 25/50/75/100% of the max when everything is above zero (every
+  // chart but a flows chart with withdrawals). With a down side, 50/100% of each
+  // side's max plus a labelled zero line, so both halves read independently.
+  const gridYs: { key: string; v: number; y: number; zero?: boolean }[] =
+    maxDown === 0
+      ? [0.25, 0.5, 0.75, 1].map((f) => ({
+          key: `u${f}`,
+          v: maxUp * f,
+          y: zeroY - toH(maxUp * f),
+        }))
+      : [
+          ...(maxUp > 0
+            ? [0.5, 1].map((f) => ({ key: `u${f}`, v: maxUp * f, y: zeroY - toH(maxUp * f) }))
+            : []),
+          { key: "zero", v: 0, y: zeroY, zero: true },
+          ...[0.5, 1].map((f) => ({ key: `d${f}`, v: -maxDown * f, y: zeroY + toH(maxDown * f) })),
+        ];
 
   return (
     <div className="w-full">
@@ -163,13 +212,13 @@ export default function FeeChart({
       >
         {/* gridlines — recessive, behind the data */}
         {gridYs.map((g) => (
-          <g key={g.f}>
+          <g key={g.key}>
             <line
               x1={padL}
               x2={W - padR}
               y1={g.y}
               y2={g.y}
-              stroke="#262626"
+              stroke={g.zero ? "#525252" : "#262626"}
               strokeWidth={1}
             />
             <text
@@ -179,21 +228,45 @@ export default function FeeChart({
               className="fill-neutral-500"
               fontSize={FONT}
             >
-              {axisLabel(maxDaily * g.f)}
+              {g.zero ? "0" : axisLabel(g.v)}
             </text>
           </g>
         ))}
 
-        {/* stacked bars, in fixed slot order from the baseline up */}
+        {/* stacked bars, in fixed slot order, outward from the zero line */}
         {dates.map((date, i) => {
           const x = padL + i * (plotW / n) + BAR_GAP / 2;
-          let yCursor = padT + plotH;
+          let yCursor = zeroY;
+          let yDown = zeroY;
           return (
             <g key={date}>
               {stacked.map((st) => {
-                const v = value(st.series[i]);
+                const v = down(st.series[i]);
                 if (v <= 0) return null;
-                const h = (v / maxDaily) * plotH;
+                const h = toH(v);
+                // Gap on the zero-line side, mirroring the up segments; a sliver
+                // thinner than its minimum height stays inside its own slot.
+                const drawH = Math.max(h - SEG_GAP, 0.75);
+                const y = Math.max(yDown, yDown + h - drawH);
+                yDown += h;
+                return (
+                  <rect
+                    key={`d${st.chain.slot}`}
+                    x={x}
+                    y={y}
+                    width={barW}
+                    height={drawH}
+                    rx={Math.min(SEG_RADIUS, drawH / 2)}
+                    fill={st.chain.color}
+                  >
+                    <title>{`${st.chain.name} — ${date} — ${formatValue(v, "down")}`}</title>
+                  </rect>
+                );
+              })}
+              {stacked.map((st) => {
+                const v = up(st.series[i]);
+                if (v <= 0) return null;
+                const h = toH(v);
                 yCursor -= h;
                 // Hold the gap out of the drawn height so neighbouring fills are
                 // separated by surface, never by a colour boundary alone.
@@ -251,6 +324,14 @@ export default function FeeChart({
       <p className="mt-2 text-xs text-neutral-500">{copy.caption}</p>
     </div>
   );
+}
+
+/** Coin formatter for axis ticks `stepSats` apart: ≥2 decimals, more if needed. */
+function axisCoinFormatter(stepSats: number): (sats: number) => string {
+  const stepCoins = stepSats / SATS_PER_COIN;
+  if (stepCoins >= 1) return formatCoinsCompact;
+  const decimals = Math.min(8, Math.max(2, Math.ceil(-Math.log10(stepCoins)) + 1));
+  return (sats) => formatCoins(sats, decimals);
 }
 
 /**
