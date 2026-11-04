@@ -7,7 +7,7 @@ import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { ensureSchema, run, setMeta, closeDb } from "../lib/db";
 import { getStoredDashboardData } from "../lib/store";
-import { utcDate } from "../lib/bmm";
+import { sha256dHex, utcDate } from "../lib/bmm";
 
 const TIME = 1_752_000_000; // fixed recent timestamp → one date, within the window
 const DAY = 86_400;
@@ -30,6 +30,51 @@ function seedCommitment(height: number, slot: number, fee: number, time = TIME) 
     fee,
   );
 }
+
+/** A v0 declaration: 0x00, title length, title, description, 52 hash bytes. */
+function declaration(title: string, description: string): string {
+  const t = Buffer.from(title, "utf8");
+  return Buffer.concat([
+    Buffer.from([0, t.length]),
+    t,
+    Buffer.from(description, "utf8"),
+    Buffer.alloc(52),
+  ]).toString("hex");
+}
+
+/** Ensure block rows exist for [from, to], all at TIME. */
+function seedBlocks(from: number, to: number) {
+  for (let h = from; h <= to; h++) {
+    run(
+      "INSERT INTO blocks (height, hash, time) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+      h,
+      `h${h}`,
+      TIME,
+    );
+  }
+}
+
+/**
+ * Propose `slot` at `at` (M1) and ack it in each of the next `acks` blocks
+ * (M2). 1,816 acks activates an empty slot on ECX.
+ */
+function propose(slot: number, title: string, at: number, acks: number, vout = 0) {
+  const descriptionHex = declaration(title, `${title} description`);
+  const hash = sha256dHex(descriptionHex);
+  seedBlocks(at, at + acks);
+  run(
+    "INSERT INTO sidechain_proposals (height, vout, slot, description_hex, hash) VALUES (?, ?, ?, ?, ?)",
+    at,
+    vout,
+    slot,
+    descriptionHex,
+    hash,
+  );
+  for (let h = at + 1; h <= at + acks; h++) {
+    run("INSERT INTO sidechain_acks (height, slot, hash) VALUES (?, ?, ?)", h, slot, hash);
+  }
+}
+const ACTIVATE = 1_816;
 
 beforeEach(() => {
   process.env.ECASH_METER_DB = ":memory:";
@@ -137,6 +182,10 @@ test("a slot missing from the registry still renders, with its fees", async () =
 test("rows are the observed slots plus activated ones, not the whole registry", async () => {
   seedCommitment(1, 9, 100); // Thunder, a registered slot
   seedCommitment(2, UNREGISTERED_SLOT, 50); // unregistered
+  // Activate ECX's five slots through real M1/M2 votes.
+  for (const [i, slot] of [9, 24, 46, 130, 131].entries()) {
+    propose(slot, `S${slot}`, 10, ACTIVATE, i);
+  }
   const data = await getStoredDashboardData();
 
   // Activated-but-idle slots (24, 46, 130, 131) are listed; lookup-only
@@ -234,4 +283,53 @@ test("treasury is unknown, not zero, when the store starts after activation", as
     data.stats.find((s) => s.chain.slot === UNREGISTERED_SLOT)?.treasurySats,
     undefined,
   );
+});
+
+// ── Activation and pending proposals, replayed from M1/M2 ────────────────────
+
+test("activations come from replayed votes, with on-chain names for unknown slots", async () => {
+  propose(200, "Newchain", 10, ACTIVATE); // not in config.ts
+  propose(201, "Almost", 10, ACTIVATE - 1, 1); // one vote short
+  const data = await getStoredDashboardData();
+
+  const row = data.stats.find((s) => s.chain.slot === 200)!;
+  assert.equal(row.activated, true);
+  assert.equal(row.chain.name, "Newchain", "named from its own declaration");
+  assert.equal(row.chain.description, "Newchain description");
+  assert.equal(data.activatedCount, 1);
+
+  assert.equal(data.stats.some((s) => s.chain.slot === 201), false);
+  assert.deepEqual(
+    data.pendingProposals?.map((p) => [p.slot, p.name, p.votes, p.votesNeeded, p.replaces]),
+    [[201, "Almost", ACTIVATE - 1, ACTIVATE, null]],
+  );
+});
+
+test("a proposal for an occupied slot is listed with the sidechain it would replace", async () => {
+  propose(9, "Thunder", 10, ACTIVATE); // Thunder takes slot 9
+  propose(9, "Lightning", 3_000, 5); // then a rival proposal for slot 9
+  const data = await getStoredDashboardData();
+  const [p] = data.pendingProposals!;
+  assert.equal(p.name, "Lightning");
+  assert.equal(p.replaces, "Thunder");
+  assert.equal(p.votesNeeded, 6_049, "replacing needs the stricter threshold");
+});
+
+test("without history back to the fork: config activations, proposals unknown", async () => {
+  seedCommitment(983_000, 9, 0); // store starts long after the fork
+  const data = await getStoredDashboardData();
+  assert.equal(data.pendingProposals, null);
+  assert.equal(data.activatedCount, 5); // from config.ts
+});
+
+test("block-rate estimate uses recent blocks, not the whole history", async () => {
+  // 500 fast early blocks (10 s), then 500 slow recent ones (400 s) — the shape
+  // of ECX after its fork, when difficulty was still settling.
+  let t = TIME - 500 * 10 - 500 * 400;
+  for (let h = 1; h <= 1000; h++) {
+    t += h <= 500 ? 10 : 400;
+    run("INSERT INTO blocks (height, hash, time) VALUES (?, ?, ?)", h, `h${h}`, t);
+  }
+  const data = await getStoredDashboardData();
+  assert.equal(data.avgBlockSeconds, 400);
 });

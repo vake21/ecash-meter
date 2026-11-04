@@ -30,6 +30,8 @@
 // for the sum(inputs) − sum(outputs) fallback. Verbosity 3 reads prevouts from
 // block undo data, so it only works for blocks the node holds undo data for.
 
+import { createHash } from "node:crypto";
+
 /** The 4-byte BMM tag plus the OP_RETURN/push prefix, as a hex string. */
 export const BMM_PREFIX = "6a25d1617368"; // 6a=OP_RETURN 25=push37 d1617368=tag
 
@@ -59,9 +61,59 @@ export const TREASURY_SCRIPT_RE = /^b701([0-9a-f]{2})51$/i;
  *   1 = original (whole-block-fee-pool attribution — incorrect)
  *   2 = per-BMM-request-tx fee attribution
  *   3 = strict commitment parsing + hardened fee attribution
- *   4 = also records sidechain treasury outputs and their spends (current)
+ *   4 = also records sidechain treasury outputs and their spends
+ *   5 = also records BIP 300 sidechain proposals (M1) and acks (M2) (current)
  */
-export const PARSER_VERSION = 4;
+export const PARSER_VERSION = 5;
+
+/** BIP 300 M1 (propose sidechain) and M2 (ack proposal) message tags. */
+const M1_TAG = "d5e0c4af";
+const M2_TAG = "d6e1c5df";
+
+/**
+ * The single data push of an `OP_RETURN <push>` script, as hex — or null if the
+ * script is anything else (BIP 300 messages are exactly that shape; trailing
+ * instructions make it an ordinary script). Accepts every push encoding.
+ */
+export function opReturnPush(hex: string): string | null {
+  if (!/^6a([0-9a-f]{2})*$/i.test(hex) || hex.length < 4) return null;
+  const op = parseInt(hex.slice(2, 4), 16);
+  let len: number;
+  let start: number;
+  if (op >= 0x01 && op <= 0x4b) {
+    len = op;
+    start = 4;
+  } else if (op === 0x4c && hex.length >= 6) {
+    len = parseInt(hex.slice(4, 6), 16);
+    start = 6;
+  } else if (op === 0x4d && hex.length >= 8) {
+    len = parseInt(hex.slice(6, 8) + hex.slice(4, 6), 16); // little-endian
+    start = 8;
+  } else {
+    return null;
+  }
+  const data = hex.slice(start);
+  return data.length === len * 2 ? data.toLowerCase() : null;
+}
+
+/** sha256d of hex bytes, hex, in the byte order an M2 carries it. */
+export function sha256dHex(hex: string): string {
+  const once = createHash("sha256").update(Buffer.from(hex, "hex")).digest();
+  return createHash("sha256").update(once).digest("hex");
+}
+
+/** A sidechain proposal (M1) in a coinbase. */
+export interface ParsedProposal {
+  vout: number;
+  slot: number;
+  descriptionHex: string;
+  hash: string;
+}
+/** A proposal ack (M2) in a coinbase. */
+export interface ParsedAck {
+  slot: number;
+  hash: string;
+}
 
 /** getblock verbosity-3 shapes we rely on. */
 export interface RawTx {
@@ -121,6 +173,8 @@ export interface ParsedBlock {
   commitments: ParsedCommitment[];
   treasuryOutputs: TreasuryOutput[];
   treasurySpends: TreasurySpend[];
+  proposals: ParsedProposal[];
+  acks: ParsedAck[];
 }
 
 /** BTC (float) → whole sats, rounded. Non-finite input yields 0, never NaN. */
@@ -203,6 +257,7 @@ export function parseBlock(b: RawBlock): ParsedBlock {
   }
 
   const { treasuryOutputs, treasurySpends } = parseTreasury(b);
+  const { proposals, acks } = parseSidechainMessages(coinbase);
   return {
     height: b.height,
     hash: b.hash,
@@ -210,7 +265,43 @@ export function parseBlock(b: RawBlock): ParsedBlock {
     commitments,
     treasuryOutputs,
     treasurySpends,
+    proposals,
+    acks,
   };
+}
+
+/**
+ * BIP 300 M1 proposals and M2 acks in a coinbase. Raw messages only — whether
+ * they count (duplicates, same-block acks, thresholds) is decided by the replay
+ * in lib/proposals.ts. At most one M2 per slot per block, as the enforcer
+ * keeps; a later duplicate is ignored.
+ */
+export function parseSidechainMessages(coinbase: RawTx | undefined): {
+  proposals: ParsedProposal[];
+  acks: ParsedAck[];
+} {
+  const proposals: ParsedProposal[] = [];
+  const acks: ParsedAck[] = [];
+  const ackedSlots = new Set<number>();
+  (coinbase?.vout ?? []).forEach((o, vout) => {
+    const data = opReturnPush(o?.scriptPubKey?.hex ?? "");
+    if (data == null) return;
+    if (data.startsWith(M1_TAG) && data.length >= 10) {
+      const descriptionHex = data.slice(10);
+      proposals.push({
+        vout,
+        slot: parseInt(data.slice(8, 10), 16),
+        descriptionHex,
+        hash: sha256dHex(descriptionHex),
+      });
+    } else if (data.startsWith(M2_TAG) && data.length === 2 * (4 + 1 + 32)) {
+      const slot = parseInt(data.slice(8, 10), 16);
+      if (ackedSlots.has(slot)) return;
+      ackedSlots.add(slot);
+      acks.push({ slot, hash: data.slice(10) });
+    }
+  });
+  return { proposals, acks };
 }
 
 /**

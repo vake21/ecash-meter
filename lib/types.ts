@@ -119,6 +119,16 @@ export interface DashboardData {
    * freshness and flag a stale indexer instead of presenting old data as current.
    */
   lastBlockTime?: number;
+  /**
+   * BIP 300 proposals still collecting votes. null = unknown (the store doesn't
+   * reach back to the ECX fork); undefined = this source doesn't track them.
+   */
+  pendingProposals?: PendingProposalView[] | null;
+  /**
+   * Mean seconds per L1 block over the stored history, for turning block
+   * counts into rough durations. Absent when it can't be measured.
+   */
+  avgBlockSeconds?: number;
   /** Number of slots activated on ECX (undefined when not tracked). */
   activatedCount?: number;
   /**
@@ -128,4 +138,27 @@ export interface DashboardData {
   totalTreasurySats?: number | null;
   /** Optional human note (e.g. why fees read 0 for this window). */
   note?: string;
+}
+
+/** A sidechain proposal still collecting miner votes (BIP 300 M1/M2). */
+export interface PendingProposalView {
+  slot: number;
+  /** Title from the proposal's on-chain declaration, else "Slot N". */
+  name: string;
+  description: string;
+  /** L1 height of the proposal (M1). */
+  proposalHeight: number;
+  /** Acks (M2) so far. */
+  votes: number;
+  /** Acks required to activate (threshold + 1). */
+  votesNeeded: number;
+  /** Blocks since the proposal. */
+  age: number;
+  /** Blocks left in its voting window. */
+  blocksLeft: number;
+  /**
+   * Name of the active sidechain this proposal would replace — i.e. deactivate
+   * — if it passes; null for a proposal on an empty slot.
+   */
+  replaces: string | null;
 }

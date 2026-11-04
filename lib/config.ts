@@ -57,9 +57,11 @@ export const ECX_GENESIS_HASH =
 // slots: 9 Thunder, 24 Elements+, 46 Flush, 130 FreeBank, 131 Tally. Those
 // entries' names, descriptions and `activationHeight`s come from that call
 // (the activation heights are the enforcer's own, after each slot's BIP 300
-// proposal collected its acks). Activation is a miner vote, which the indexer
-// does not re-count from L1 — so a newly activated slot appears on the site
-// only once it is added here. Proposals still collecting votes are NOT listed. The remaining entries
+// proposal collected its acks). The site does NOT rely on these heights: it
+// replays the proposal votes itself (lib/proposals.ts), so a newly activated
+// slot appears on its own, named from its on-chain declaration until an entry
+// is added here. The heights are a FALLBACK for a store too shallow to replay
+// from the fork, and a record to check the replay against. The remaining entries
 // (2, 4, 98, 99, 255) are NOT registered on ECX; they are kept because the
 // table is only a lookup — an unregistered slot can never appear in the data,
 // and if one registers later its colour is already validated.
@@ -217,6 +219,7 @@ export function isKnownSlot(slot: number): boolean {
 export function drivechainForSlot(
   slot: number,
   taken: ReadonlySet<string> = new Set(),
+  declaration?: { title: string; description: string },
 ): Drivechain {
   const known = BY_SLOT.get(slot);
   if (known) return known;
@@ -233,11 +236,15 @@ export function drivechainForSlot(
     }
   }
 
+  // An activated slot we have no entry for still has the name and description
+  // it declared on chain in its BIP 300 proposal.
   return {
     slot,
-    name: `Slot ${slot}`,
+    name: declaration?.title || `Slot ${slot}`,
     ticker: `S${slot}`,
-    description: "Unregistered drivechain slot — no published metadata",
+    description:
+      declaration?.description ||
+      "Unregistered drivechain slot — no published metadata",
     color,
   };
 }
@@ -247,7 +254,10 @@ export function drivechainForSlot(
  * order. Known slots keep their validated colours and reserve them first, so
  * unknown slots never steal a registered chain's colour.
  */
-export function resolveDrivechains(slots: Iterable<number>): Drivechain[] {
+export function resolveDrivechains(
+  slots: Iterable<number>,
+  declarations: ReadonlyMap<number, { title: string; description: string }> = new Map(),
+): Drivechain[] {
   const sorted = [...new Set(slots)].sort((a, b) => a - b);
   const taken = new Set<string>();
   for (const s of sorted) {
@@ -255,7 +265,7 @@ export function resolveDrivechains(slots: Iterable<number>): Drivechain[] {
     if (known) taken.add(known.color);
   }
   return sorted.map((s) => {
-    const chain = drivechainForSlot(s, taken);
+    const chain = drivechainForSlot(s, taken, declarations.get(s));
     taken.add(chain.color);
     return chain;
   });

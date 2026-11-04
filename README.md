@@ -19,8 +19,9 @@ ECX mainnet     block indexer        history store                     reads the
 ```
 
 - **Indexer** (`scripts/index.ts`) scans new L1 blocks, parses each coinbase's BMM
-  commitments (one `OP_RETURN` per merge-mined slot), records every sidechain treasury
-  output (`OP_DRIVECHAIN <slot> OP_TRUE`) and every spend of one, and stores them. It resumes from the
+  commitments (one `OP_RETURN` per merge-mined slot) and BIP 300 sidechain proposals and
+  acks, records every sidechain treasury output (`OP_DRIVECHAIN <slot> OP_TRUE`) and every
+  spend of one, and stores them. It resumes from the
   highest block already stored, so re-running only fetches what's new.
 - **Store** is a single SQLite file via Node's built-in `node:sqlite` — no database server.
 - **Site** reads purely from the store, so it renders even when the node is offline.
@@ -29,8 +30,14 @@ The dashboard shows **every slot it observes being merge-mined, plus every slot 
 on ECX** (even one with no BMM blocks yet), resolving each against a table of published
 sidechain metadata (`lib/config.ts`) and synthesizing an entry for any slot that table
 does not name. A hardcoded slate must never be able to hide real on-chain activity.
-Activation is a BIP 300 miner vote that the indexer does not re-count, so activation
-heights are copied into `lib/config.ts` from an enforcer's `GetSidechains`.
+Which slots are activated — and which proposals are still collecting votes, listed under
+**Pending activation** — is replayed from the BIP 300 proposal (M1) and ack (M2) messages
+in each coinbase (`lib/proposals.ts`), using the enforcer's own rules and ECX's
+thresholds: a proposal for an empty slot activates with more than 1,815 acks within
+2,016 blocks; one for an occupied slot needs more than 6,048 within 12,096 and would
+replace (deactivate) the sidechain there. This needs the store to reach back to the ECX
+fork; a shallower store falls back to the activation heights in `lib/config.ts` and shows
+pending proposals as unknown.
 
 **In sidechain** is the ECX each activated sidechain currently holds on L1: the value of
 its current treasury output. Every deposit and withdrawal spends that output and creates

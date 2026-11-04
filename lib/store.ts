@@ -12,8 +12,25 @@
 // rolling boundary (blocks newer than latest-block-time − 24h), and lastBlockTime
 // is exposed so the UI can show freshness rather than presenting stale data as new.
 
-import type { DashboardData, DrivechainStats, FeePoint } from "./types";
-import { ACTIVATED_DRIVECHAINS, resolveDrivechains, WINDOW_DAYS } from "./config";
+import type {
+  DashboardData,
+  DrivechainStats,
+  FeePoint,
+  PendingProposalView,
+} from "./types";
+import {
+  ACTIVATED_DRIVECHAINS,
+  ECX_FORK_HEIGHT,
+  KNOWN_DRIVECHAINS,
+  resolveDrivechains,
+  WINDOW_DAYS,
+} from "./config";
+import {
+  replayProposals,
+  type AckRow,
+  type Declaration,
+  type ProposalRow,
+} from "./proposals";
 import { get, all, getMeta } from "./db";
 import { finalizeStats } from "./aggregate";
 import { utcDate } from "./bmm";
@@ -57,6 +74,28 @@ function lastNDatesEnding(refDate: string, n: number): string[] {
   const out: string[] = [];
   for (let i = n - 1; i >= 0; i--) out.push(addDaysUTC(refDate, -i));
   return out;
+}
+
+/** Blocks used to measure the current block rate (~2 days at ECX's late-2026 pace). */
+const RATE_WINDOW_BLOCKS = 432;
+
+/**
+ * Mean seconds per block over the most recent RATE_WINDOW_BLOCKS — not the
+ * whole store. ECX's difficulty was still settling after the fork: blocks
+ * since the fork averaged 57 s while the last 432 averaged 387 s (2026-11-04),
+ * so a whole-history mean would understate a voting window ~7×.
+ */
+function recentBlockSeconds(
+  tipHeight: number,
+  tipTime: number,
+  storeFloor: number,
+): number | undefined {
+  const from = Math.max(storeFloor, tipHeight - RATE_WINDOW_BLOCKS);
+  if (from >= tipHeight) return undefined;
+  const row = get<{ time: number }>("SELECT time FROM blocks WHERE height = ?", from);
+  if (!row) return undefined;
+  const s = (tipTime - row.time) / (tipHeight - from);
+  return s > 0 ? s : undefined;
 }
 
 export async function getStoredDashboardData(): Promise<DashboardData> {
@@ -127,9 +166,41 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
   // vanished from the site. resolveDrivechains() supplies metadata, synthesizing
   // an entry for a slot we have no published name for.
   //
+  // Which slots are activated, and which proposals are pending, replayed from
+  // the stored BIP 300 messages. That needs the store to reach back to the ECX
+  // fork, where BIP 300 began; a shallower store can't see the votes that
+  // activated a slot, so it falls back to the activation table in config.ts
+  // and reports pending proposals as unknown.
+  const storeFloor = tipRow.minHeight ?? Infinity;
+  const fullHistory = storeFloor <= ECX_FORK_HEIGHT;
+  const replay = fullHistory
+    ? replayProposals(
+        all<ProposalRow>(
+          `SELECT height, vout, slot, description_hex AS descriptionHex, hash
+           FROM sidechain_proposals`,
+        ),
+        all<AckRow>("SELECT height, slot, hash FROM sidechain_acks"),
+        tipHeight,
+      )
+    : null;
+  const activated: { slot: number; activationHeight: number }[] = replay
+    ? [...replay.active.values()].map((a) => ({
+        slot: a.slot,
+        activationHeight: a.activationHeight,
+      }))
+    : ACTIVATED_DRIVECHAINS.map((c) => ({
+        slot: c.slot,
+        activationHeight: c.activationHeight!,
+      }));
+  // On-chain names for active slots — used only where config.ts has no entry.
+  const declarations = new Map<number, Declaration>();
+  for (const a of replay?.active.values() ?? []) {
+    if (a.declaration) declarations.set(a.slot, a.declaration);
+  }
+
   // Activated slots are listed too, even with no BMM activity in the window:
   // an activated sidechain that isn't merge-mining yet can still hold coins.
-  const activatedSlots = new Set(ACTIVATED_DRIVECHAINS.map((c) => c.slot));
+  const activatedSlots = new Set(activated.map((c) => c.slot));
   const observedSlots = new Set<number>([
     ...tally.keys(),
     ...last24BySlot.keys(),
@@ -148,9 +219,8 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
     all<TreasurySpendRow>(
       "SELECT height, tx_index AS txIndex, txid, vout FROM treasury_spends",
     ),
-    ACTIVATED_DRIVECHAINS,
+    activated,
   );
-  const storeFloor = tipRow.minHeight ?? Infinity;
   // Block times for the heights where a balance changed (few rows).
   const changeHeights = [...new Set([...history.values()].flat().map((c) => c.height))];
   const timeByHeight = new Map<number, number>(
@@ -162,12 +232,12 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
         ).map((r) => [r.height, r.time]),
   );
   const treasuryOf = (slot: number): number | null | undefined => {
-    const chain = ACTIVATED_DRIVECHAINS.find((c) => c.slot === slot);
+    const chain = activated.find((c) => c.slot === slot);
     if (!chain) return undefined;
-    if (storeFloor > chain.activationHeight!) return null;
+    if (storeFloor > chain.activationHeight) return null;
     return ctips.get(slot)?.valueSats ?? 0;
   };
-  const stats: DrivechainStats[] = resolveDrivechains(observedSlots).map((chain) => {
+  const stats: DrivechainStats[] = resolveDrivechains(observedSlots, declarations).map((chain) => {
     const byDate = tally.get(chain.slot);
     // End-of-day treasury balances and daily deposits/withdrawals, only where
     // the balance is known (a store that misses part of the history would
@@ -226,6 +296,27 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
     grandTotalBmmCommitments,
     lastBlockTime,
     activatedCount: activatedSlots.size,
+    avgBlockSeconds: recentBlockSeconds(tipHeight, lastBlockTime, storeFloor),
+    pendingProposals: replay
+      ? replay.pending.map((p): PendingProposalView => {
+          const occupant = p.replaces
+            ? (KNOWN_DRIVECHAINS.find((c) => c.slot === p.slot)?.name ??
+              p.replaces.declaration?.title ??
+              `Slot ${p.slot}`)
+            : null;
+          return {
+            slot: p.slot,
+            name: p.declaration?.title ?? `Slot ${p.slot}`,
+            description: p.declaration?.description ?? "",
+            proposalHeight: p.proposalHeight,
+            votes: p.votes,
+            votesNeeded: p.threshold + 1,
+            age: p.age,
+            blocksLeft: p.maxAge - p.age,
+            replaces: occupant,
+          };
+        })
+      : null,
     totalTreasurySats,
     note:
       grandTotalBmmCommitments > 0 && grandTotalFeesSats === 0

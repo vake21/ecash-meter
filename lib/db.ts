@@ -75,6 +75,23 @@ export function ensureSchema(d: DatabaseSync = getDb()): void {
       PRIMARY KEY (txid, vout)
     );
 
+    -- Raw BIP 300 coinbase messages (lib/proposals.ts replays them):
+    -- M1 sidechain proposals and M2 acks. Cascade with blocks for reorgs.
+    CREATE TABLE IF NOT EXISTS sidechain_proposals (
+      height          INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE,
+      vout            INTEGER NOT NULL,
+      slot            INTEGER NOT NULL CHECK (slot BETWEEN 0 AND 255),
+      description_hex TEXT NOT NULL,
+      hash            TEXT NOT NULL CHECK (length(hash) = 64),
+      PRIMARY KEY (height, vout)
+    );
+    CREATE TABLE IF NOT EXISTS sidechain_acks (
+      height INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE,
+      slot   INTEGER NOT NULL CHECK (slot BETWEEN 0 AND 255),
+      hash   TEXT NOT NULL CHECK (length(hash) = 64),
+      PRIMARY KEY (height, slot)
+    );
+
     CREATE TABLE IF NOT EXISTS meta (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL

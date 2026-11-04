@@ -377,6 +377,28 @@ export async function runIndexer(deps: IndexerDeps): Promise<IndexerResult> {
                 o.valueSats,
               );
             }
+            for (const m1 of parsed.proposals) {
+              run(
+                `INSERT INTO sidechain_proposals (height, vout, slot, description_hex, hash)
+                 VALUES (?, ?, ?, ?, ?)
+                 ON CONFLICT (height, vout) DO NOTHING`,
+                parsed.height,
+                m1.vout,
+                m1.slot,
+                m1.descriptionHex,
+                m1.hash,
+              );
+            }
+            for (const m2 of parsed.acks) {
+              run(
+                `INSERT INTO sidechain_acks (height, slot, hash)
+                 VALUES (?, ?, ?)
+                 ON CONFLICT (height, slot) DO NOTHING`,
+                parsed.height,
+                m2.slot,
+                m2.hash,
+              );
+            }
             for (const sp of parsed.treasurySpends) {
               run(
                 `INSERT INTO treasury_spends (height, tx_index, txid, vout)
