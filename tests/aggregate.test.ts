@@ -1,7 +1,7 @@
 // Fix #3 — metric selection, share, and ranking all use the SAME metric.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { finalizeStats } from "../lib/aggregate";
+import { finalizeStats, orderByCustody } from "../lib/aggregate";
 import type { DrivechainStats, Drivechain } from "../lib/types";
 
 function chain(slot: number, name: string): Drivechain {
@@ -77,4 +77,56 @@ test("stored-path and live-path inputs produce identical output (same helper)", 
   const rb = finalizeStats(b);
   assert.deepEqual(ra, rb);
   assert.deepEqual(a.map((s) => [s.chain.slot, s.shareOfTotal]), b.map((s) => [s.chain.slot, s.shareOfTotal]));
+});
+
+// ── Table order: ECX custodied ───────────────────────────────────────────────
+
+const held = (s: DrivechainStats, treasurySats: number | null | undefined) => ({
+  ...s,
+  treasurySats,
+});
+
+test("orderByCustody puts the largest treasury first, whatever the fees", () => {
+  const stats = [
+    held(stat(46, "Flush", 200_000, 100), 341_009_500),
+    held(stat(9, "Thunder", 11_000, 30), 118_000_000),
+    held(stat(130, "FreeBank", 0, 0), 1_000_000),
+  ];
+  // Thunder overtakes Flush once it custodies more.
+  stats[1] = held(stats[1], 500_000_000);
+  assert.deepEqual(
+    orderByCustody(stats).map((r) => r.chain.name),
+    ["Thunder", "Flush", "FreeBank"],
+  );
+});
+
+test("orderByCustody keeps the incoming order for equal balances", () => {
+  const stats = [
+    held(stat(24, "Elements+", 0, 2), 1_000_000),
+    held(stat(130, "FreeBank", 0, 1), 1_000_000),
+    held(stat(131, "Tally", 0, 0), 1_000_000),
+  ];
+  assert.deepEqual(
+    orderByCustody(stats).map((r) => r.chain.slot),
+    [24, 130, 131],
+  );
+});
+
+test("orderByCustody sorts unknown and untracked balances last", () => {
+  const stats = [
+    held(stat(1, "Unknown", 0, 0), null),
+    held(stat(2, "Untracked", 0, 0), undefined),
+    held(stat(3, "Empty", 0, 0), 0),
+    held(stat(4, "Funded", 0, 0), 5),
+  ];
+  assert.deepEqual(
+    orderByCustody(stats).map((r) => r.chain.name),
+    ["Funded", "Empty", "Unknown", "Untracked"],
+  );
+});
+
+test("orderByCustody does not reorder its input", () => {
+  const stats = [held(stat(1, "Small", 9, 0), 1), held(stat(2, "Big", 0, 0), 9)];
+  orderByCustody(stats);
+  assert.deepEqual(stats.map((r) => r.chain.name), ["Small", "Big"]);
 });

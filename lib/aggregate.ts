@@ -46,3 +46,19 @@ export function finalizeStats(stats: DrivechainStats[]): {
 
   return { metric, grandTotalFeesSats, grandTotalBmmCommitments };
 }
+
+/**
+ * Order rows by ECX custodied (current treasury balance), largest first, for the
+ * drivechain table. Returns a new array; `stats` is untouched, so the headline
+ * ranking (top contributor, chart order) is unaffected.
+ *
+ * Rows whose balance is unknown (null) or untracked (undefined) sort after
+ * every known balance. Ties — e.g. several chains holding the same deposit —
+ * keep their incoming order, which is the headline ranking from finalizeStats.
+ */
+export function orderByCustody(stats: DrivechainStats[]): DrivechainStats[] {
+  const custody = (r: DrivechainStats) =>
+    typeof r.treasurySats === "number" ? r.treasurySats : -1;
+  // Array.prototype.sort is stable, so equal balances keep their order.
+  return [...stats].sort((a, b) => custody(b) - custody(a));
+}

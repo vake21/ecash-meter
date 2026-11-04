@@ -2,6 +2,7 @@ import { getDashboardData } from "@/lib/node";
 import { hasLogo, hasWallpaper, LOGO_FILE, WALLPAPER_FILE } from "@/lib/branding";
 import { credit, learnLinks } from "@/lib/site-links";
 import { computeFreshness } from "@/lib/freshness";
+import { orderByCustody } from "@/lib/aggregate";
 import FeeChart, { ChartLegend, type ChartMetric } from "@/components/FeeChart";
 import HeaderMotif from "@/components/HeaderMotif";
 import { feeFormatter, formatCoins, formatInt, formatPct } from "@/lib/format";
@@ -47,6 +48,10 @@ export default async function Home() {
       ? [{ metric: "treasury" as const, title: "ECX held" }]
       : []),
   ];
+  // The table is ordered by ECX custodied, largest first, so it re-sorts itself
+  // as balances change. (The cards and charts keep the headline ranking.)
+  const tableRows = orderByCustody(stats);
+
   const legendChains = stats
     .filter((r) =>
       r.series.some(
@@ -260,17 +265,16 @@ export default async function Home() {
           </div>
         </section>
 
-        {/* ranked table */}
+        {/* drivechain table, ordered by ECX custodied */}
         <section className="panel rounded-2xl">
           <h2 className="px-6 pb-1 pt-6 text-base font-semibold tracking-tight text-neutral-100">
-            {isBmm
-              ? "Drivechains by BMM activity"
-              : "Drivechains by fees fed to L1"}
+            Drivechains
           </h2>
           <div className="overflow-x-auto px-3 pb-3 pt-2">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-[11px] uppercase tracking-[0.08em] text-neutral-500">
+                  <th className="px-3 py-2 text-right font-medium">Slot</th>
                   <th className="px-3 py-2 font-medium">Drivechain</th>
                   <th className="px-3 py-2 text-right font-medium">
                     BMM blocks
@@ -290,11 +294,14 @@ export default async function Home() {
                 </tr>
               </thead>
               <tbody>
-                {stats.map((r) => (
+                {tableRows.map((r) => (
                   <tr
                     key={r.chain.slot}
                     className="border-t border-white/[0.06] transition-colors hover:bg-white/[0.035]"
                   >
+                    <td className="px-3 py-3 text-right tabular-nums text-neutral-400">
+                      {r.chain.slot}
+                    </td>
                     <td className="px-3 py-3">
                       <div className="flex items-center gap-3">
                         <span
@@ -309,7 +316,7 @@ export default async function Home() {
                             </span>
                           </div>
                           <div className="text-xs text-neutral-500">
-                            slot {r.chain.slot} · {r.chain.description}
+                            {r.chain.description}
                           </div>
                           {r.activated && r.bmmCommitments === 0 ? (
                             <div className="mt-1 text-[11px] text-neutral-500">
@@ -355,7 +362,7 @@ export default async function Home() {
               {showTreasury && totalTreasurySats !== undefined ? (
                 <tfoot>
                   <tr className="border-t border-white/[0.12] text-neutral-400">
-                    <td className="px-3 py-3 text-xs font-medium uppercase tracking-[0.08em]" colSpan={4}>
+                    <td className="px-3 py-3 text-xs font-medium uppercase tracking-[0.08em]" colSpan={5}>
                       Total held by drivechains
                     </td>
                     <td className="px-3 py-3 text-right font-medium tabular-nums text-neutral-100">
