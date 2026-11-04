@@ -23,6 +23,14 @@ export function formatSats(sats: number): string {
   return `${Math.round(sats).toLocaleString("en-US")} sats`;
 }
 
+/** Compact sats for tight spaces, e.g. "154K sats". */
+export function formatSatsCompact(sats: number): string {
+  return `${Math.round(sats).toLocaleString("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  })} sats`;
+}
+
 /**
  * Coin display carries at most 2 fraction digits, so any amount below 0.01
  * coins renders as "0.00" and the number is lost. Below this reference
@@ -42,8 +50,9 @@ const COIN_DISPLAY_MIN_SATS = SATS_PER_COIN / 100;
 export function feeFormatter(
   maxSats: number,
   coinFormat: (sats: number) => string = formatCoinsCompact,
+  satsFormat: (sats: number) => string = formatSats,
 ): (sats: number) => string {
-  return maxSats < COIN_DISPLAY_MIN_SATS ? formatSats : coinFormat;
+  return maxSats < COIN_DISPLAY_MIN_SATS ? satsFormat : coinFormat;
 }
 
 /** Fraction (0-1) as a percentage, e.g. "23.4%". */

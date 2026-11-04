@@ -2,7 +2,7 @@ import { getDashboardData } from "@/lib/node";
 import { hasLogo, hasWallpaper, LOGO_FILE, WALLPAPER_FILE } from "@/lib/branding";
 import { credit, learnLinks } from "@/lib/site-links";
 import { computeFreshness } from "@/lib/freshness";
-import FeeChart from "@/components/FeeChart";
+import FeeChart, { ChartLegend, type ChartMetric } from "@/components/FeeChart";
 import HeaderMotif from "@/components/HeaderMotif";
 import { feeFormatter, formatCoins, formatInt, formatPct } from "@/lib/format";
 
@@ -37,6 +37,23 @@ export default async function Home() {
   // Treasury column appears only when the data source tracks treasuries (the
   // DB path does; the live-scan and mock paths don't).
   const showTreasury = stats.some((r) => r.treasurySats !== undefined);
+
+  // The charts sit side by side and share one legend (same colour per chain in
+  // every chart). The legend lists each chain that appears in ANY of them.
+  const charts: { metric: ChartMetric; title: string }[] = [
+    ...(!isBmm ? [{ metric: "fees" as const, title: "Fees fed to L1" }] : []),
+    { metric: "bmm", title: "BMM blocks" },
+    ...(showTreasury
+      ? [{ metric: "treasury" as const, title: "ECX held" }]
+      : []),
+  ];
+  const legendChains = stats
+    .filter((r) =>
+      r.series.some(
+        (p) => p.bmmCount > 0 || p.feeSats > 0 || (p.treasurySats ?? 0) > 0,
+      ),
+    )
+    .map((r) => r.chain);
 
   // Fee amounts pick their unit per group, so satoshi-scale totals show as sats
   // rather than rounding away to "0.00 BTC". The two tiles key off the window
@@ -84,7 +101,7 @@ export default async function Home() {
           ].join(","),
         }}
       />
-      <div className="mx-auto max-w-5xl px-6 py-12 sm:py-14">
+      <div className="mx-auto max-w-6xl px-6 py-12 sm:py-14">
         {/* header */}
         <header className="relative isolate mb-10 flex flex-wrap items-end justify-between gap-5 pb-4">
           <HeaderMotif />
@@ -216,20 +233,32 @@ export default async function Home() {
           )}
         </section>
 
-        {/* charts — same dates on every x-axis, same colour per drivechain */}
-        {!isBmm ? (
-          <ChartPanel title="Fees fed to L1 over time">
-            <FeeChart stats={stats} windowDays={windowDays} metric="fees" />
-          </ChartPanel>
-        ) : null}
-        <ChartPanel title="BMM blocks over time">
-          <FeeChart stats={stats} windowDays={windowDays} metric="bmm" />
-        </ChartPanel>
-        {showTreasury ? (
-          <ChartPanel title="ECX held in each sidechain">
-            <FeeChart stats={stats} windowDays={windowDays} metric="treasury" />
-          </ChartPanel>
-        ) : null}
+        {/* charts — side by side, same dates on every x-axis, same colour per
+            drivechain, one shared legend */}
+        <section className="mb-10">
+          <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
+            <h2 className="text-base font-semibold tracking-tight text-neutral-100">
+              Last {windowDays} {windowDays === 1 ? "day" : "days"}
+            </h2>
+            <ChartLegend chains={legendChains} />
+          </div>
+          <div
+            className={`grid gap-5 ${
+              charts.length === 3 ? "lg:grid-cols-3" : "md:grid-cols-2"
+            }`}
+          >
+            {charts.map((c) => (
+              <ChartPanel key={c.metric} title={c.title}>
+                <FeeChart
+                  stats={stats}
+                  windowDays={windowDays}
+                  metric={c.metric}
+                  showLegend={false}
+                />
+              </ChartPanel>
+            ))}
+          </div>
+        </section>
 
         {/* ranked table */}
         <section className="panel rounded-2xl">
@@ -429,12 +458,12 @@ function ChartPanel({
   children: React.ReactNode;
 }) {
   return (
-    <section className="panel mb-10 rounded-2xl p-6">
-      <h2 className="mb-5 text-base font-semibold tracking-tight text-neutral-100">
+    <div className="panel rounded-2xl p-5">
+      <h3 className="mb-3 text-sm font-semibold tracking-tight text-neutral-100">
         {title}
-      </h2>
+      </h3>
       {children}
-    </section>
+    </div>
   );
 }
 

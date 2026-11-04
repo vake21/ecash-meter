@@ -1,5 +1,12 @@
 import type { DrivechainStats, FeePoint } from "@/lib/types";
-import { feeFormatter, formatCoins, formatInt } from "@/lib/format";
+import type { Drivechain } from "@/lib/types";
+import {
+  feeFormatter,
+  formatCoins,
+  formatCoinsCompact,
+  formatInt,
+  formatSatsCompact,
+} from "@/lib/format";
 
 export type ChartMetric = "fees" | "bmm" | "treasury";
 
@@ -10,19 +17,19 @@ const COPY: Record<
 > = {
   fees: {
     aria: "Daily drivechain fees fed to L1",
-    caption: "Daily fees fed to L1 miners, stacked by drivechain",
+    caption: "Fees paid to L1 miners each day",
     emptyTitle: "No BMM commitments were found in the indexed window.",
     emptyBody: "The indexer has blocks, but none carried drivechain commitments over",
   },
   bmm: {
     aria: "Daily blind-merged-mining commitments per drivechain",
-    caption: "Daily BMM blocks (commitments in L1 coinbases), stacked by drivechain",
+    caption: "L1 blocks carrying each sidechain's BMM commitment, per day",
     emptyTitle: "No BMM commitments were found in the indexed window.",
     emptyBody: "The indexer has blocks, but none carried drivechain commitments over",
   },
   treasury: {
     aria: "ECX held in each drivechain's L1 treasury at the end of each day",
-    caption: "ECX held at the end of each day, stacked by drivechain",
+    caption: "ECX held at the end of each day",
     emptyTitle: "No drivechain held any ECX in the indexed window.",
     emptyBody: "No activated sidechain had a funded L1 treasury over",
   },
@@ -36,30 +43,44 @@ interface Props {
    * commitment counts that day, "treasury" = ECX held at the end of that day.
    */
   metric: ChartMetric;
+  /**
+   * Draw this chart's own legend. Off when several charts sit side by side
+   * under one shared <ChartLegend>, since their colours are identical.
+   */
+  showLegend?: boolean;
 }
 
-// Chart geometry (viewBox units).
-const W = 720;
-const H = 300;
-const padL = 8;
+// Chart geometry (viewBox units). Sized for a ~third-width panel: the SVG
+// scales to its container, so a canvas this size keeps 11-unit text at roughly
+// 9.5px on screen. (At the old 720-wide canvas, a third-width panel shrank the
+// axis text to ~4px.)
+const W = 360;
+const H = 220;
+const FONT = 11;
+const padL = 4;
 // Right gutter holds the gridline labels OUTSIDE the plot. Inside it, they
 // collided with the last bar — always the tallest on the treasury chart, since a
 // balance tends to grow.
-const padR = 60;
+const padR = 58;
 const padT = 8;
-const padB = 30;
+const padB = 22;
 const plotW = W - padL - padR;
 const plotH = H - padT - padB;
 const BAR_GAP = 2; // between days
 const SEG_GAP = 2; // between stacked segments, so adjacent fills never touch
-const SEG_RADIUS = 2;
+const SEG_RADIUS = 1.5;
 
 // Stacked bar chart: one bar per day, each segment one drivechain's value that
 // day — fees fed to L1, BMM blocks, or ECX held at day's end (a balance, so the
 // bar's height is the total held by all drivechains). Pure SVG, no chart
 // dependency, SSR. All three metrics share the geometry, palette and stack
 // order, so the charts read as one system.
-export default function FeeChart({ stats, windowDays, metric }: Props) {
+export default function FeeChart({
+  stats,
+  windowDays,
+  metric,
+  showLegend = true,
+}: Props) {
   const dates = stats[0]?.series.map((p) => p.date) ?? [];
   const value = (p: FeePoint | undefined) =>
     metric === "bmm"
@@ -118,8 +139,10 @@ export default function FeeChart({ stats, windowDays, metric }: Props) {
       : metric === "treasury"
         ? formatCoins(v, 4) // exact holdings in the tooltip; the axis rounds
         : formatFee(v);
+  // Axis ticks use compact numbers ("154K sats", "4.62 ECX") to fit the gutter.
+  const formatAxisFee = feeFormatter(maxDaily, formatCoinsCompact, formatSatsCompact);
   const axisLabel = (v: number) =>
-    metric === "bmm" ? formatInt(Math.round(v)) : formatFee(v);
+    metric === "bmm" ? formatInt(Math.round(v)) : formatAxisFee(v);
 
   const n = dates.length;
   const barW = plotW / n - BAR_GAP;
@@ -154,7 +177,7 @@ export default function FeeChart({ stats, windowDays, metric }: Props) {
               y={g.y + 3}
               textAnchor="end"
               className="fill-neutral-500"
-              fontSize={9}
+              fontSize={FONT}
             >
               {axisLabel(maxDaily * g.f)}
             </text>
@@ -198,16 +221,19 @@ export default function FeeChart({ stats, windowDays, metric }: Props) {
         })}
 
         {/* x-axis: first/mid/last date labels */}
-        {[0, Math.floor(n / 2), n - 1].map((i) => {
-          const x = padL + i * (plotW / n) + barW / 2;
+        {[...new Set([0, Math.floor(n / 2), n - 1])].map((i) => {
+          // The first label starts at the plot edge rather than centring on its
+          // bar, which would push it off the canvas on a narrow chart.
+          const first = i === 0 && n > 1;
+          const x = first ? padL : padL + i * (plotW / n) + barW / 2;
           return (
             <text
               key={i}
               x={x}
-              y={H - 8}
-              textAnchor="middle"
+              y={H - 6}
+              textAnchor={first ? "start" : "middle"}
               className="fill-neutral-500"
-              fontSize={9}
+              fontSize={FONT}
             >
               {dates[i].slice(5)}
             </text>
@@ -215,29 +241,48 @@ export default function FeeChart({ stats, windowDays, metric }: Props) {
         })}
       </svg>
 
-      {/* Legend — eight series is past the point where direct labels fit, so
-          identity is carried here rather than by colour alone. Same order as the
-          stack, and the text wears text tokens rather than the series colour. */}
-      <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
-        {stacked.map((st) => (
+      {showLegend ? (
+        <ChartLegend
+          className="mt-3"
+          chains={stacked.map((st) => st.chain)}
+        />
+      ) : null}
+
+      <p className="mt-2 text-xs text-neutral-500">{copy.caption}</p>
+    </div>
+  );
+}
+
+/**
+ * Legend — more series than direct labels can fit, so identity is carried here
+ * rather than by colour alone. Same order as the stack (slot order), and the
+ * text wears text tokens rather than the series colour. Shared by charts that
+ * sit side by side, so it is exported on its own.
+ */
+export function ChartLegend({
+  chains,
+  className = "",
+}: {
+  chains: Drivechain[];
+  className?: string;
+}) {
+  return (
+    <ul className={`flex flex-wrap gap-x-4 gap-y-1.5 ${className}`}>
+      {[...chains]
+        .sort((a, b) => a.slot - b.slot)
+        .map((c) => (
           <li
-            key={st.chain.slot}
+            key={c.slot}
             className="flex items-center gap-1.5 text-xs text-neutral-400"
           >
             <span
               aria-hidden="true"
               className="h-2 w-2 shrink-0 rounded-[2px]"
-              style={{ backgroundColor: st.chain.color }}
+              style={{ backgroundColor: c.color }}
             />
-            {st.chain.name}
+            {c.name}
           </li>
         ))}
-      </ul>
-
-      <p className="mt-2 text-xs text-neutral-500">
-        {copy.caption}{" "}
-        · last {windowDays} {windowDays === 1 ? "day" : "days"}
-      </p>
-    </div>
+    </ul>
   );
 }
