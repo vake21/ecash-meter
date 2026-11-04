@@ -4,7 +4,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseTreasury, type RawBlock, type RawTx } from "../lib/bmm";
 import {
+  dailyBalances,
   replayTreasury,
+  replayTreasuryHistory,
   type TreasuryOutputRow,
   type TreasurySpendRow,
 } from "../lib/treasury";
@@ -134,4 +136,58 @@ test("slots are independent", () => {
   );
   assert.equal(ctips.get(46)?.valueSats, 1_000);
   assert.equal(ctips.get(9)?.valueSats, 7_000);
+});
+
+// ── History and daily balances ───────────────────────────────────────────────
+
+test("history records every accepted balance change, including emptying", () => {
+  const { history } = replayTreasuryHistory(
+    [
+      out(101, 1, id("a"), 46, 1_000),
+      out(102, 1, id("f"), 46, 999_999), // look-alike: not in history
+      out(103, 1, id("b"), 46, 3_000),
+    ],
+    [spend(103, 1, id("a")), spend(104, 1, id("b"))],
+    ACTIVATED,
+  );
+  assert.deepEqual(history.get(46), [
+    { height: 101, valueSats: 1_000 },
+    { height: 103, valueSats: 3_000 },
+    { height: 104, valueSats: 0 },
+  ]);
+  assert.deepEqual(history.get(9), []);
+});
+
+test("dailyBalances carries the end-of-day balance forward", () => {
+  const DAY = 86_400;
+  const t0 = Date.UTC(2026, 10, 1) / 1000; // 2026-11-01 00:00 UTC
+  const times = new Map([
+    [101, t0 + 3600], // 11-01
+    [102, t0 + 7200], // 11-01, later the same day → this one wins
+    [103, t0 + 2 * DAY + 60], // 11-03
+  ]);
+  const toDate = (u: number) => new Date(u * 1000).toISOString().slice(0, 10);
+  const dates = ["2026-10-31", "2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04"];
+  assert.deepEqual(
+    dailyBalances(
+      [
+        { height: 101, valueSats: 5 },
+        { height: 102, valueSats: 7 },
+        { height: 103, valueSats: 2 },
+      ],
+      (h) => times.get(h),
+      dates,
+      toDate,
+    ),
+    [0, 7, 7, 2, 2],
+  );
+});
+
+test("dailyBalances counts changes from before the window", () => {
+  const toDate = (u: number) => new Date(u * 1000).toISOString().slice(0, 10);
+  const before = Date.UTC(2026, 9, 1) / 1000; // 2026-10-01, before the window
+  assert.deepEqual(
+    dailyBalances([{ height: 1, valueSats: 9 }], () => before, ["2026-11-01", "2026-11-02"], toDate),
+    [9, 9],
+  );
 });

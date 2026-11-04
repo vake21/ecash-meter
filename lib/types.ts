@@ -47,6 +47,11 @@ export interface FeePoint {
   feeSats: number;
   /** BMM commitments that day (blocks the sidechain was merge-mined into). */
   bmmCount: number;
+  /**
+   * ECX held in the sidechain's L1 treasury at the END of that day, sats.
+   * Absent when the source doesn't track treasuries or the balance is unknown.
+   */
+  treasurySats?: number;
 }
 
 /** Rolled-up stats for one drivechain over the tracked window. */

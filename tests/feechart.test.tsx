@@ -63,3 +63,37 @@ test("a populated series renders the chart (svg), not the empty state", () => {
   assert.match(html, /<svg/);
   assert.doesNotMatch(html, /No BMM commitments were found/);
 });
+
+// ── Treasury metric ──────────────────────────────────────────────────────────
+
+const renderAs = (
+  stats: DrivechainStats[],
+  windowDays: number,
+  metric: "fees" | "bmm" | "treasury",
+) =>
+  renderToStaticMarkup(React.createElement(FeeChart, { stats, windowDays, metric }));
+
+test("treasury metric plots end-of-day balances, with exact ECX in the tooltip", () => {
+  const series: FeePoint[] = [
+    { date: "2026-11-02", bmmCount: 0, feeSats: 0, treasurySats: 0 },
+    { date: "2026-11-03", bmmCount: 0, feeSats: 0, treasurySats: 341_009_500 },
+  ];
+  const html = renderAs([statWith(46, series)], 2, "treasury");
+  assert.match(html, /<svg/);
+  assert.match(html, /C46 — 2026-11-03 — 3\.4101 ECX/);
+  assert.match(html, /ECX held at the end of each day/);
+});
+
+test("treasury metric with no known balances shows its own empty state", () => {
+  // No treasurySats at all (source doesn't track them) → empty, not a crash.
+  const series: FeePoint[] = [{ date: "2026-11-03", bmmCount: 4, feeSats: 9 }];
+  const html = renderAs([statWith(46, series)], 1, "treasury");
+  assert.match(html, /No drivechain held any ECX/);
+  assert.doesNotMatch(html, /<svg/);
+});
+
+test("bmm metric tooltips count BMM blocks", () => {
+  const series: FeePoint[] = [{ date: "2026-11-03", bmmCount: 1, feeSats: 0 }];
+  const html = renderAs([statWith(9, series)], 1, "bmm");
+  assert.match(html, /C9 — 2026-11-03 — 1 BMM block</);
+});

@@ -216,13 +216,20 @@ export default async function Home() {
           )}
         </section>
 
-        {/* chart */}
-        <section className="panel mb-10 rounded-2xl p-6">
-          <h2 className="mb-5 text-base font-semibold tracking-tight text-neutral-100">
-            {isBmm ? "BMM activity over time" : "Fees fed to L1 over time"}
-          </h2>
-          <FeeChart stats={stats} windowDays={windowDays} metric={metric} />
-        </section>
+        {/* charts — same dates on every x-axis, same colour per drivechain */}
+        {!isBmm ? (
+          <ChartPanel title="Fees fed to L1 over time">
+            <FeeChart stats={stats} windowDays={windowDays} metric="fees" />
+          </ChartPanel>
+        ) : null}
+        <ChartPanel title="BMM blocks over time">
+          <FeeChart stats={stats} windowDays={windowDays} metric="bmm" />
+        </ChartPanel>
+        {showTreasury ? (
+          <ChartPanel title="ECX held in each sidechain">
+            <FeeChart stats={stats} windowDays={windowDays} metric="treasury" />
+          </ChartPanel>
+        ) : null}
 
         {/* ranked table */}
         <section className="panel rounded-2xl">
@@ -412,6 +419,23 @@ function TreasuryCell({ sats }: { sats: number | null | undefined }) {
       </span>
     );
   return <>{formatCoins(sats, 4)}</>;
+}
+
+function ChartPanel({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="panel mb-10 rounded-2xl p-6">
+      <h2 className="mb-5 text-base font-semibold tracking-tight text-neutral-100">
+        {title}
+      </h2>
+      {children}
+    </section>
+  );
 }
 
 function StatCard({

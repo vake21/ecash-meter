@@ -1,18 +1,51 @@
 import type { DrivechainStats, FeePoint } from "@/lib/types";
-import { feeFormatter, formatInt } from "@/lib/format";
+import { feeFormatter, formatCoins, formatInt } from "@/lib/format";
+
+export type ChartMetric = "fees" | "bmm" | "treasury";
+
+/** Per-metric wording, so the three charts share one geometry. */
+const COPY: Record<
+  ChartMetric,
+  { aria: string; caption: string; emptyTitle: string; emptyBody: string }
+> = {
+  fees: {
+    aria: "Daily drivechain fees fed to L1",
+    caption: "Daily fees fed to L1 miners, stacked by drivechain",
+    emptyTitle: "No BMM commitments were found in the indexed window.",
+    emptyBody: "The indexer has blocks, but none carried drivechain commitments over",
+  },
+  bmm: {
+    aria: "Daily blind-merged-mining commitments per drivechain",
+    caption: "Daily BMM blocks (commitments in L1 coinbases), stacked by drivechain",
+    emptyTitle: "No BMM commitments were found in the indexed window.",
+    emptyBody: "The indexer has blocks, but none carried drivechain commitments over",
+  },
+  treasury: {
+    aria: "ECX held in each drivechain's L1 treasury at the end of each day",
+    caption: "ECX held at the end of each day, stacked by drivechain",
+    emptyTitle: "No drivechain held any ECX in the indexed window.",
+    emptyBody: "No activated sidechain had a funded L1 treasury over",
+  },
+};
 
 interface Props {
   stats: DrivechainStats[];
   windowDays: number;
-  /** Which series value to plot. "bmm" = commitment counts, "fees" = sats. */
-  metric: "fees" | "bmm";
+  /**
+   * Which series value to plot: "fees" = sats paid to L1 that day, "bmm" =
+   * commitment counts that day, "treasury" = ECX held at the end of that day.
+   */
+  metric: ChartMetric;
 }
 
 // Chart geometry (viewBox units).
 const W = 720;
 const H = 300;
 const padL = 8;
-const padR = 8;
+// Right gutter holds the gridline labels OUTSIDE the plot. Inside it, they
+// collided with the last bar — always the tallest on the treasury chart, since a
+// balance tends to grow.
+const padR = 60;
 const padT = 8;
 const padB = 30;
 const plotW = W - padL - padR;
@@ -21,12 +54,20 @@ const BAR_GAP = 2; // between days
 const SEG_GAP = 2; // between stacked segments, so adjacent fills never touch
 const SEG_RADIUS = 2;
 
-// Stacked bar chart: one bar per day, each segment one drivechain's contribution
-// that day (BMM commitments or fees). Pure SVG — no chart dependency. SSR.
+// Stacked bar chart: one bar per day, each segment one drivechain's value that
+// day — fees fed to L1, BMM blocks, or ECX held at day's end (a balance, so the
+// bar's height is the total held by all drivechains). Pure SVG, no chart
+// dependency, SSR. All three metrics share the geometry, palette and stack
+// order, so the charts read as one system.
 export default function FeeChart({ stats, windowDays, metric }: Props) {
   const dates = stats[0]?.series.map((p) => p.date) ?? [];
   const value = (p: FeePoint | undefined) =>
-    metric === "bmm" ? (p?.bmmCount ?? 0) : (p?.feeSats ?? 0);
+    metric === "bmm"
+      ? (p?.bmmCount ?? 0)
+      : metric === "treasury"
+        ? (p?.treasurySats ?? 0)
+        : (p?.feeSats ?? 0);
+  const copy = COPY[metric];
   // Total of the values we'd actually plot (from the series), so the empty-state
   // decision matches what the chart would draw.
   const windowTotal = stats.reduce(
@@ -42,12 +83,10 @@ export default function FeeChart({ stats, windowDays, metric }: Props) {
   if (dates.length === 0 || windowTotal === 0) {
     return (
       <div className="w-full rounded-lg border border-neutral-800 bg-neutral-900/40 px-4 py-10 text-center">
-        <p className="text-sm text-neutral-400">
-          No BMM commitments were found in the indexed window.
-        </p>
+        <p className="text-sm text-neutral-400">{copy.emptyTitle}</p>
         <p className="mt-1 text-xs text-neutral-500">
-          The indexer has blocks, but none carried drivechain commitments over
-          the last {windowDays} {windowDays === 1 ? "day" : "days"}.
+          {copy.emptyBody} the last {windowDays}{" "}
+          {windowDays === 1 ? "day" : "days"}.
         </p>
       </div>
     );
@@ -75,8 +114,10 @@ export default function FeeChart({ stats, windowDays, metric }: Props) {
   const formatFee = feeFormatter(maxDaily);
   const formatValue = (v: number) =>
     metric === "bmm"
-      ? `${formatInt(Math.round(v))} commitment${v === 1 ? "" : "s"}`
-      : formatFee(v);
+      ? `${formatInt(Math.round(v))} BMM block${v === 1 ? "" : "s"}`
+      : metric === "treasury"
+        ? formatCoins(v, 4) // exact holdings in the tooltip; the axis rounds
+        : formatFee(v);
   const axisLabel = (v: number) =>
     metric === "bmm" ? formatInt(Math.round(v)) : formatFee(v);
 
@@ -95,11 +136,7 @@ export default function FeeChart({ stats, windowDays, metric }: Props) {
         viewBox={`0 0 ${W} ${H}`}
         className="w-full h-auto"
         role="img"
-        aria-label={
-          metric === "bmm"
-            ? "Daily blind-merged-mining commitments per drivechain"
-            : "Daily drivechain fees fed to L1"
-        }
+        aria-label={copy.aria}
       >
         {/* gridlines — recessive, behind the data */}
         {gridYs.map((g) => (
@@ -113,8 +150,8 @@ export default function FeeChart({ stats, windowDays, metric }: Props) {
               strokeWidth={1}
             />
             <text
-              x={W - padR}
-              y={g.y - 3}
+              x={W - 2}
+              y={g.y + 3}
               textAnchor="end"
               className="fill-neutral-500"
               fontSize={9}
@@ -138,11 +175,15 @@ export default function FeeChart({ stats, windowDays, metric }: Props) {
                 // Hold the gap out of the drawn height so neighbouring fills are
                 // separated by surface, never by a colour boundary alone.
                 const drawH = Math.max(h - SEG_GAP, 0.75);
+                // A segment thinner than its minimum drawn height is lifted so
+                // it stays inside its own slot, never poking below the baseline
+                // or into the segment underneath.
+                const y = Math.min(yCursor, yCursor + h - drawH);
                 return (
                   <rect
                     key={st.chain.slot}
                     x={x}
-                    y={yCursor}
+                    y={y}
                     width={barW}
                     height={drawH}
                     rx={Math.min(SEG_RADIUS, drawH / 2)}
@@ -194,9 +235,7 @@ export default function FeeChart({ stats, windowDays, metric }: Props) {
       </ul>
 
       <p className="mt-2 text-xs text-neutral-500">
-        {metric === "bmm"
-          ? "Daily BMM commitments (blocks merge-mined), stacked by drivechain"
-          : "Daily fees fed to L1 miners, stacked by drivechain"}{" "}
+        {copy.caption}{" "}
         · last {windowDays} {windowDays === 1 ? "day" : "days"}
       </p>
     </div>

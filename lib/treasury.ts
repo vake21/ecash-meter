@@ -48,6 +48,19 @@ export interface Ctip {
 const outpoint = (txid: string, vout: number) => `${txid}:${vout}`;
 const txKey = (height: number, txIndex: number) => height * 1_000_000 + txIndex;
 
+/** A slot's balance changed at this height (0 = emptied). */
+export interface BalanceChange {
+  height: number;
+  valueSats: number;
+}
+
+export interface TreasuryReplay {
+  /** Every activated slot's current treasury: its Ctip, or null if it holds nothing. */
+  ctips: Map<number, Ctip | null>;
+  /** Every activated slot's balance changes, in chain order. */
+  history: Map<number, BalanceChange[]>;
+}
+
 /**
  * Replay treasury events into each activated slot's current treasury output.
  * Returns an entry for every slot in `activated`: its Ctip, or null when the
@@ -58,6 +71,15 @@ export function replayTreasury(
   spends: TreasurySpendRow[],
   activated: Pick<Drivechain, "slot" | "activationHeight">[],
 ): Map<number, Ctip | null> {
+  return replayTreasuryHistory(outputs, spends, activated).ctips;
+}
+
+/** As replayTreasury, but also returns each slot's balance history. */
+export function replayTreasuryHistory(
+  outputs: TreasuryOutputRow[],
+  spends: TreasurySpendRow[],
+  activated: Pick<Drivechain, "slot" | "activationHeight">[],
+): TreasuryReplay {
   const activationBySlot = new Map(
     activated
       .filter((c) => c.activationHeight != null)
@@ -79,7 +101,11 @@ export function replayTreasury(
   for (const s of spends) entry(s.height, s.txIndex).spent.add(outpoint(s.txid, s.vout));
 
   const ctips = new Map<number, Ctip | null>();
-  for (const slot of activationBySlot.keys()) ctips.set(slot, null);
+  const history = new Map<number, BalanceChange[]>();
+  for (const slot of activationBySlot.keys()) {
+    ctips.set(slot, null);
+    history.set(slot, []);
+  }
   const nextSeq = new Map<number, number>();
 
   for (const k of [...byTx.keys()].sort((a, b) => a - b)) {
@@ -109,10 +135,37 @@ export function replayTreasury(
           height: o.height,
           sequence,
         });
+        history.get(slot)!.push({ height, valueSats: o.valueSats });
       } else if (spendsCurrent) {
         ctips.set(slot, null);
+        history.get(slot)!.push({ height, valueSats: 0 });
       }
     }
   }
-  return ctips;
+  return { ctips, history };
+}
+
+/**
+ * End-of-day balance for each of `dates` (ascending ISO dates), given a slot's
+ * balance changes and the unix time of each block height. A day with no change
+ * carries the previous balance forward; days before the first change read 0.
+ */
+export function dailyBalances(
+  changes: BalanceChange[],
+  timeOfHeight: (height: number) => number | undefined,
+  dates: string[],
+  toDate: (unixSeconds: number) => string,
+): number[] {
+  const dated = changes
+    .map((c) => {
+      const t = timeOfHeight(c.height);
+      return t == null ? null : { date: toDate(t), valueSats: c.valueSats };
+    })
+    .filter((c): c is { date: string; valueSats: number } => c != null);
+  let i = 0;
+  let balance = 0;
+  return dates.map((d) => {
+    while (i < dated.length && dated[i].date <= d) balance = dated[i++].valueSats;
+    return balance;
+  });
 }

@@ -18,7 +18,8 @@ import { get, all, getMeta } from "./db";
 import { finalizeStats } from "./aggregate";
 import { utcDate } from "./bmm";
 import {
-  replayTreasury,
+  dailyBalances,
+  replayTreasuryHistory,
   type TreasuryOutputRow,
   type TreasurySpendRow,
 } from "./treasury";
@@ -138,7 +139,7 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
   // balance is only trustworthy if the store reaches back to its activation —
   // a store that starts later may have missed the deposits that created its
   // current treasury, so that slot reads as unknown (null), never as 0.
-  const ctips = replayTreasury(
+  const { ctips, history } = replayTreasuryHistory(
     all<TreasuryOutputRow>(
       `SELECT height, tx_index AS txIndex, txid, vout, slot, value_sats AS valueSats
        FROM treasury_outputs`,
@@ -149,6 +150,16 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
     ACTIVATED_DRIVECHAINS,
   );
   const storeFloor = tipRow.minHeight ?? Infinity;
+  // Block times for the heights where a balance changed (few rows).
+  const changeHeights = [...new Set([...history.values()].flat().map((c) => c.height))];
+  const timeByHeight = new Map<number, number>(
+    changeHeights.length === 0
+      ? []
+      : all<{ height: number; time: number }>(
+          `SELECT height, time FROM blocks WHERE height IN (${changeHeights.map(() => "?").join(",")})`,
+          ...changeHeights,
+        ).map((r) => [r.height, r.time]),
+  );
   const treasuryOf = (slot: number): number | null | undefined => {
     const chain = ACTIVATED_DRIVECHAINS.find((c) => c.slot === slot);
     if (!chain) return undefined;
@@ -157,10 +168,21 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
   };
   const stats: DrivechainStats[] = resolveDrivechains(observedSlots).map((chain) => {
     const byDate = tally.get(chain.slot);
-    const series: FeePoint[] = dates.map((date) => ({
+    // End-of-day treasury balances, only where the balance is known.
+    const balances =
+      treasuryOf(chain.slot) != null
+        ? dailyBalances(
+            history.get(chain.slot) ?? [],
+            (h) => timeByHeight.get(h),
+            dates,
+            utcDate,
+          )
+        : undefined;
+    const series: FeePoint[] = dates.map((date, i) => ({
       date,
       bmmCount: byDate?.get(date)?.bmm ?? 0,
       feeSats: byDate?.get(date)?.fee ?? 0,
+      ...(balances ? { treasurySats: balances[i] } : {}),
     }));
     const bmmCommitments = series.reduce((s, p) => s + p.bmmCount, 0);
     const totalFeesSats = series.reduce((s, p) => s + p.feeSats, 0);
