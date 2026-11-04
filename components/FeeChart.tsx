@@ -57,7 +57,11 @@ export default function FeeChart({ stats, windowDays, metric }: Props) {
   // reasons: the series palette was validated on the adjacent pairs that slot
   // order produces, and a stack whose segment order changes with the ranking is
   // unreadable across days. The ranked order still drives the table below.
-  const stacked = [...stats].sort((a, b) => a.chain.slot - b.chain.slot);
+  // Chains with nothing to plot in the window (activated but idle) are left out
+  // of the stack and the legend; the table still lists them.
+  const stacked = stats
+    .filter((st) => st.series.some((p) => value(p) > 0))
+    .sort((a, b) => a.chain.slot - b.chain.slot);
 
   // Daily total across all chains, for y-axis scaling.
   const dailyTotals = dates.map((_, i) =>

@@ -16,6 +16,11 @@ export interface Drivechain {
   description: string;
   /** Tailwind-friendly accent color (hex) used in charts/cards. */
   color: string;
+  /**
+   * L1 height at which this slot's BIP 300 activation vote passed on ECX.
+   * Absent for slots that are not activated on ECX.
+   */
+  activationHeight?: number;
 }
 
 /**
@@ -65,6 +70,15 @@ export interface DrivechainStats {
   shareOfTotal: number;
   /** Daily time series for charting. */
   series: FeePoint[];
+  /** True when the slot is activated on ECX (listed even with no BMM blocks). */
+  activated?: boolean;
+  /**
+   * ECX currently held in the sidechain's L1 treasury output (its CTIP), sats.
+   * `undefined` = this data source doesn't track treasuries; `null` = unknown
+   * because the store doesn't cover the slot's history back to activation;
+   * 0 = activated but nothing deposited.
+   */
+  treasurySats?: number | null;
 }
 
 /** Everything the dashboard needs, as returned by the data layer. */
@@ -96,6 +110,13 @@ export interface DashboardData {
    * freshness and flag a stale indexer instead of presenting old data as current.
    */
   lastBlockTime?: number;
+  /** Number of slots activated on ECX (undefined when not tracked). */
+  activatedCount?: number;
+  /**
+   * Sum of treasurySats across activated slots; null if any is unknown,
+   * undefined when this data source doesn't track treasuries.
+   */
+  totalTreasurySats?: number | null;
   /** Optional human note (e.g. why fees read 0 for this window). */
   note?: string;
 }

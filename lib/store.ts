@@ -13,10 +13,15 @@
 // is exposed so the UI can show freshness rather than presenting stale data as new.
 
 import type { DashboardData, DrivechainStats, FeePoint } from "./types";
-import { resolveDrivechains, WINDOW_DAYS } from "./config";
+import { ACTIVATED_DRIVECHAINS, resolveDrivechains, WINDOW_DAYS } from "./config";
 import { get, all, getMeta } from "./db";
 import { finalizeStats } from "./aggregate";
 import { utcDate } from "./bmm";
+import {
+  replayTreasury,
+  type TreasuryOutputRow,
+  type TreasurySpendRow,
+} from "./treasury";
 
 /** Thrown when the store has no data yet (caller can fall back to mock). */
 export class EmptyStoreError extends Error {}
@@ -55,11 +60,12 @@ function lastNDatesEnding(refDate: string, n: number): string[] {
 export async function getStoredDashboardData(): Promise<DashboardData> {
   const tipRow = get<{
     tip: number | null;
+    minHeight: number | null;
     scanned: number;
     firstTime: number | null;
     lastTime: number | null;
   }>(
-    "SELECT MAX(height) AS tip, COUNT(*) AS scanned, MIN(time) AS firstTime, MAX(time) AS lastTime FROM blocks",
+    "SELECT MAX(height) AS tip, MIN(height) AS minHeight, COUNT(*) AS scanned, MIN(time) AS firstTime, MAX(time) AS lastTime FROM blocks",
   );
   const tipHeight = tipRow?.tip;
   const blocksScanned = tipRow?.scanned ?? 0;
@@ -118,10 +124,37 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
   // slate silently dropped every slot missing from it — real indexed activity
   // vanished from the site. resolveDrivechains() supplies metadata, synthesizing
   // an entry for a slot we have no published name for.
+  //
+  // Activated slots are listed too, even with no BMM activity in the window:
+  // an activated sidechain that isn't merge-mining yet can still hold coins.
+  const activatedSlots = new Set(ACTIVATED_DRIVECHAINS.map((c) => c.slot));
   const observedSlots = new Set<number>([
     ...tally.keys(),
     ...last24BySlot.keys(),
+    ...activatedSlots,
   ]);
+
+  // Treasury balances, replayed from every stored treasury event. A slot's
+  // balance is only trustworthy if the store reaches back to its activation —
+  // a store that starts later may have missed the deposits that created its
+  // current treasury, so that slot reads as unknown (null), never as 0.
+  const ctips = replayTreasury(
+    all<TreasuryOutputRow>(
+      `SELECT height, tx_index AS txIndex, txid, vout, slot, value_sats AS valueSats
+       FROM treasury_outputs`,
+    ),
+    all<TreasurySpendRow>(
+      "SELECT height, tx_index AS txIndex, txid, vout FROM treasury_spends",
+    ),
+    ACTIVATED_DRIVECHAINS,
+  );
+  const storeFloor = tipRow.minHeight ?? Infinity;
+  const treasuryOf = (slot: number): number | null | undefined => {
+    const chain = ACTIVATED_DRIVECHAINS.find((c) => c.slot === slot);
+    if (!chain) return undefined;
+    if (storeFloor > chain.activationHeight!) return null;
+    return ctips.get(slot)?.valueSats ?? 0;
+  };
   const stats: DrivechainStats[] = resolveDrivechains(observedSlots).map((chain) => {
     const byDate = tally.get(chain.slot);
     const series: FeePoint[] = dates.map((date) => ({
@@ -140,12 +173,21 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
       avgBidSats: 0,
       shareOfTotal: 0, // filled by finalizeStats
       series,
+      activated: activatedSlots.has(chain.slot),
+      treasurySats: treasuryOf(chain.slot),
     };
   });
 
   // Metric selection, per-chain share, and ranking — all from the same metric.
   const { metric, grandTotalFeesSats, grandTotalBmmCommitments } =
     finalizeStats(stats);
+
+  const treasuries = stats
+    .filter((r) => r.activated)
+    .map((r) => r.treasurySats);
+  const totalTreasurySats = treasuries.some((t) => t == null)
+    ? null
+    : treasuries.reduce<number>((sum, t) => sum + (t ?? 0), 0);
 
   return {
     network,
@@ -157,6 +199,8 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
     grandTotalFeesSats,
     grandTotalBmmCommitments,
     lastBlockTime,
+    activatedCount: activatedSlots.size,
+    totalTreasurySats,
     note:
       grandTotalBmmCommitments > 0 && grandTotalFeesSats === 0
         ? "No BMM bid in this window paid a fee, so the headline is commitment activity."

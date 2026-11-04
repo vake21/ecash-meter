@@ -134,15 +134,22 @@ test("a slot missing from the registry still renders, with its fees", async () =
   assert.equal(data.stats[0].shareOfTotal, 1);
 });
 
-test("rows are only the observed slots, not the whole registry", async () => {
+test("rows are the observed slots plus activated ones, not the whole registry", async () => {
   seedCommitment(1, 9, 100); // Thunder, a registered slot
   seedCommitment(2, UNREGISTERED_SLOT, 50); // unregistered
   const data = await getStoredDashboardData();
 
+  // Activated-but-idle slots (24, 46, 130, 131) are listed; lookup-only
+  // entries that were never activated on ECX (2, 4, 13, 98, 99, 255) are not.
   assert.deepEqual(
     data.stats.map((s) => s.chain.slot).sort((a, b) => a - b),
-    [9, UNREGISTERED_SLOT],
+    [9, 24, 46, UNREGISTERED_SLOT, 130, 131],
   );
+  const idle = data.stats.find((s) => s.chain.slot === 130)!;
+  assert.equal(idle.activated, true);
+  assert.equal(idle.bmmCommitments, 0);
+  assert.equal(idle.shareOfTotal, 0);
+  assert.equal(data.activatedCount, 5);
   // A registered slot keeps its published metadata and its validated colour.
   const thunder = data.stats.find((s) => s.chain.slot === 9)!;
   assert.equal(thunder.chain.name, "Thunder");
@@ -168,4 +175,47 @@ test("a slot with only rolling-24h activity is not dropped", async () => {
   const data = await getStoredDashboardData();
   const row = data.stats.find((s) => s.chain.slot === 255)!;
   assert.equal(row.feesLast24hSats, 7);
+});
+
+// ── Treasury balances ────────────────────────────────────────────────────────
+
+const TXA = "a".repeat(64);
+const TXB = "b".repeat(64);
+
+test("treasury balance comes from the replayed treasury chain", async () => {
+  // Store reaches back past every activation height (978,324 … 978,708).
+  seedCommitment(978_000, 9, 0);
+  run("INSERT INTO blocks (height, hash, time) VALUES (?, ?, ?)", 979_000, "h979000", TIME);
+  run("INSERT INTO blocks (height, hash, time) VALUES (?, ?, ?)", 979_001, "h979001", TIME);
+  run(
+    "INSERT INTO treasury_outputs (height, tx_index, txid, vout, slot, value_sats) VALUES (?, ?, ?, ?, ?, ?)",
+    979_000, 1, TXA, 0, 46, 1_000_000,
+  );
+  run(
+    "INSERT INTO treasury_outputs (height, tx_index, txid, vout, slot, value_sats) VALUES (?, ?, ?, ?, ?, ?)",
+    979_001, 3, TXB, 1, 46, 3_000_000,
+  );
+  run(
+    "INSERT INTO treasury_spends (height, tx_index, txid, vout) VALUES (?, ?, ?, ?)",
+    979_001, 3, TXA, 0,
+  );
+  const data = await getStoredDashboardData();
+  const bySlot = new Map(data.stats.map((s) => [s.chain.slot, s]));
+  assert.equal(bySlot.get(46)!.treasurySats, 3_000_000);
+  assert.equal(bySlot.get(130)!.treasurySats, 0, "activated, never funded");
+  assert.equal(data.totalTreasurySats, 3_000_000);
+});
+
+test("treasury is unknown, not zero, when the store starts after activation", async () => {
+  seedCommitment(983_000, 9, 0); // later than every activation height
+  const data = await getStoredDashboardData();
+  for (const s of data.stats.filter((r) => r.activated)) {
+    assert.equal(s.treasurySats, null, `slot ${s.chain.slot}`);
+  }
+  assert.equal(data.totalTreasurySats, null);
+  // A slot that isn't activated has no treasury figure at all.
+  assert.equal(
+    data.stats.find((s) => s.chain.slot === UNREGISTERED_SLOT)?.treasurySats,
+    undefined,
+  );
 });

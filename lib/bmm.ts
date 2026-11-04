@@ -40,23 +40,44 @@ export const BMM_PREFIX = "6a25d1617368"; // 6a=OP_RETURN 25=push37 d1617368=tag
 export const BMM_COMMITMENT_RE = /^6a25d1617368([0-9a-f]{2})([0-9a-f]{64})$/i;
 
 /**
+ * BIP 300 sidechain treasury output (the "CTIP"): every deposit and withdrawal
+ * spends the slot's current treasury output and creates its successor, whose
+ * value is everything the sidechain holds on L1.
+ *   script hex = b7 01 <slot:1 byte> 51   (OP_NOP8=OP_DRIVECHAIN, push1 slot, OP_TRUE)
+ * The slot is always a 1-byte push, never a small-int opcode (slot 9 is
+ * `b7010951`, not `b75951`). Verified against the ECX enforcer's GetCtip for
+ * all five activated slots on 2026-11-04; ECX's node labels these outputs
+ * `"type": "drivechain"`.
+ */
+export const TREASURY_SCRIPT_RE = /^b701([0-9a-f]{2})51$/i;
+
+/**
  * Fee-attribution parser version. Stored in the DB's `meta` table so the indexer
  * can detect a database written by a different version and refuse to append stale
  * data to it (the DB is a derived cache — rebuild instead). BUMP THIS whenever the
  * fee math or commitment interpretation below changes.
  *   1 = original (whole-block-fee-pool attribution — incorrect)
  *   2 = per-BMM-request-tx fee attribution
- *   3 = strict commitment parsing + hardened fee attribution (current)
+ *   3 = strict commitment parsing + hardened fee attribution
+ *   4 = also records sidechain treasury outputs and their spends (current)
  */
-export const PARSER_VERSION = 3;
+export const PARSER_VERSION = 4;
 
 /** getblock verbosity-3 shapes we rely on. */
 export interface RawTx {
-  vout: { scriptPubKey: { hex: string }; value: number }[];
+  txid?: string;
+  vout: { scriptPubKey: { hex: string }; value: number; n?: number }[];
   /** Per-tx fee in BTC (present for non-coinbase txs at verbosity 3). */
   fee?: number;
-  /** Inputs; `prevout.value` (BTC) is present at verbosity 3. */
-  vin?: { prevout?: { value: number } }[];
+  /**
+   * Inputs. At verbosity 3 each non-coinbase input carries the outpoint it
+   * spends (`txid`, `vout`) and its `prevout` (value in BTC, plus script).
+   */
+  vin?: {
+    txid?: string;
+    vout?: number;
+    prevout?: { value: number; scriptPubKey?: { hex: string } };
+  }[];
 }
 export interface RawBlock {
   height: number;
@@ -76,12 +97,30 @@ export interface ParsedCommitment {
   /** Fee (sats) attributed to this commitment's slot (0 when the bid paid none). */
   feeSats: number;
 }
+/** A drivechain treasury output created in this block. */
+export interface TreasuryOutput {
+  /** Position of the creating tx within the block (orders same-block events). */
+  txIndex: number;
+  txid: string;
+  vout: number;
+  slot: number;
+  valueSats: number;
+}
+/** An input in this block that spends a drivechain treasury output. */
+export interface TreasurySpend {
+  txIndex: number;
+  /** The outpoint being spent. */
+  txid: string;
+  vout: number;
+}
 export interface ParsedBlock {
   height: number;
   hash: string;
   /** Unix seconds of the block. */
   time: number;
   commitments: ParsedCommitment[];
+  treasuryOutputs: TreasuryOutput[];
+  treasurySpends: TreasurySpend[];
 }
 
 /** BTC (float) → whole sats, rounded. Non-finite input yields 0, never NaN. */
@@ -163,7 +202,57 @@ export function parseBlock(b: RawBlock): ParsedBlock {
     }
   }
 
-  return { height: b.height, hash: b.hash, time: b.time, commitments };
+  const { treasuryOutputs, treasurySpends } = parseTreasury(b);
+  return {
+    height: b.height,
+    hash: b.hash,
+    time: b.time,
+    commitments,
+    treasuryOutputs,
+    treasurySpends,
+  };
+}
+
+/**
+ * Every drivechain treasury output created, and every one spent, in a block.
+ * Records raw events only — deciding which output is a slot's CURRENT treasury
+ * needs the whole history, and lives in lib/treasury.ts. The coinbase is
+ * skipped: deposits and withdrawals are ordinary transactions.
+ */
+export function parseTreasury(b: RawBlock): {
+  treasuryOutputs: TreasuryOutput[];
+  treasurySpends: TreasurySpend[];
+} {
+  const treasuryOutputs: TreasuryOutput[] = [];
+  const treasurySpends: TreasurySpend[] = [];
+  if (!Array.isArray(b?.tx)) return { treasuryOutputs, treasurySpends };
+
+  b.tx.forEach((tx, txIndex) => {
+    if (txIndex === 0 || !tx || typeof tx.txid !== "string") return;
+    for (const i of tx.vin ?? []) {
+      const hex = i?.prevout?.scriptPubKey?.hex;
+      if (
+        typeof hex === "string" &&
+        TREASURY_SCRIPT_RE.test(hex) &&
+        typeof i.txid === "string" &&
+        Number.isInteger(i.vout)
+      ) {
+        treasurySpends.push({ txIndex, txid: i.txid, vout: i.vout! });
+      }
+    }
+    (tx.vout ?? []).forEach((o, n) => {
+      const m = TREASURY_SCRIPT_RE.exec(o?.scriptPubKey?.hex ?? "");
+      if (!m) return;
+      treasuryOutputs.push({
+        txIndex,
+        txid: tx.txid!,
+        vout: Number.isInteger(o.n) ? o.n! : n,
+        slot: parseInt(m[1], 16),
+        valueSats: toSats(o.value),
+      });
+    });
+  });
+  return { treasuryOutputs, treasurySpends };
 }
 
 /** UTC ISO date (YYYY-MM-DD) for a unix-seconds timestamp. */

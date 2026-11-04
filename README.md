@@ -19,15 +19,26 @@ ECX mainnet     block indexer        history store                     reads the
 ```
 
 - **Indexer** (`scripts/index.ts`) scans new L1 blocks, parses each coinbase's BMM
-  commitments (one `OP_RETURN` per merge-mined slot), and stores them. It resumes from the
+  commitments (one `OP_RETURN` per merge-mined slot), records every sidechain treasury
+  output (`OP_DRIVECHAIN <slot> OP_TRUE`) and every spend of one, and stores them. It resumes from the
   highest block already stored, so re-running only fetches what's new.
 - **Store** is a single SQLite file via Node's built-in `node:sqlite` — no database server.
 - **Site** reads purely from the store, so it renders even when the node is offline.
 
-The dashboard shows **exactly the slots it observes being merge-mined**, resolving each
-against a table of published sidechain metadata (`lib/config.ts`) and synthesizing an
-entry for any slot that table does not name. A hardcoded slate must never be able to hide
-real on-chain activity.
+The dashboard shows **every slot it observes being merge-mined, plus every slot activated
+on ECX** (even one with no BMM blocks yet), resolving each against a table of published
+sidechain metadata (`lib/config.ts`) and synthesizing an entry for any slot that table
+does not name. A hardcoded slate must never be able to hide real on-chain activity.
+Activation is a BIP 300 miner vote that the indexer does not re-count, so activation
+heights are copied into `lib/config.ts` from an enforcer's `GetSidechains`.
+
+**In sidechain** is the ECX each activated sidechain currently holds on L1: the value of
+its current treasury output. Every deposit and withdrawal spends that output and creates
+its successor, so the site replays the stored treasury events in chain order
+(`lib/treasury.ts`), accepting a new output only if it spends the current one — the same
+rule the enforcer applies, so look-alike outputs can't inflate a balance. This needs the
+store to reach back to each slot's activation; if it doesn't, the balance shows as
+"unknown" rather than a wrong number.
 
 The headline metric follows the data: **fees to L1** whenever the window contains a paid
 BMM bid, falling back to **BMM commitment count** when commitments exist but none paid a

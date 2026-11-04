@@ -364,6 +364,30 @@ export async function runIndexer(deps: IndexerDeps): Promise<IndexerResult> {
               );
               commitmentsInserted += Number(cins.changes);
             }
+            for (const o of parsed.treasuryOutputs) {
+              run(
+                `INSERT INTO treasury_outputs (height, tx_index, txid, vout, slot, value_sats)
+                 VALUES (?, ?, ?, ?, ?, ?)
+                 ON CONFLICT (txid, vout) DO NOTHING`,
+                parsed.height,
+                o.txIndex,
+                o.txid,
+                o.vout,
+                o.slot,
+                o.valueSats,
+              );
+            }
+            for (const sp of parsed.treasurySpends) {
+              run(
+                `INSERT INTO treasury_spends (height, tx_index, txid, vout)
+                 VALUES (?, ?, ?, ?)
+                 ON CONFLICT (txid, vout) DO NOTHING`,
+                parsed.height,
+                sp.txIndex,
+                sp.txid,
+                sp.vout,
+              );
+            }
           }
           setMeta("network", network);
           setMeta("fork_block_hash", ECX_FORK_BLOCK_HASH);

@@ -208,7 +208,7 @@ ECASH_METER_DB=.data/rehearsal.sqlite
 ECASH_RPC_URL=http://127.0.0.1:8532          # 18302 under BitWindow
 ECASH_RPC_USER=$(cut -d: -f1  "$D/.cookie")  # literally __cookie__
 ECASH_RPC_PASS=$(cut -d: -f2- "$D/.cookie")
-ECASH_BACKFILL_BLOCKS=20000                  # clamps to the fork anyway
+ECASH_BACKFILL_BLOCKS=1000000                # clamps to the fork; must reach it
 ECASH_INDEX_CHUNK=100                        # smaller chunks on a laptop
 ```
 

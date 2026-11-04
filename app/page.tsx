@@ -24,9 +24,19 @@ export default async function Home() {
     metric,
     note,
     lastBlockTime,
+    activatedCount,
+    totalTreasurySats,
   } = data;
   const isBmm = metric === "bmm";
+  // "Active" = merge-mined in the window. Activated-but-idle slots are listed
+  // in the table but don't count here.
   const activeCount = stats.filter((r) => r.bmmCommitments > 0).length;
+  const activeSub =
+    activatedCount != null ? `of ${activatedCount} activated` : undefined;
+
+  // Treasury column appears only when the data source tracks treasuries (the
+  // DB path does; the live-scan and mock paths don't).
+  const showTreasury = stats.some((r) => r.treasurySats !== undefined);
 
   // Fee amounts pick their unit per group, so satoshi-scale totals show as sats
   // rather than rounding away to "0.00 BTC". The two tiles key off the window
@@ -163,7 +173,11 @@ export default async function Home() {
                 label="Blocks scanned"
                 value={formatInt(blocksScanned)}
               />
-              <StatCard label="Active drivechains" value={String(activeCount)} />
+              <StatCard
+                label="Active drivechains"
+                value={String(activeCount)}
+                sub={activeSub}
+              />
               <StatCard
                 label="Most active"
                 value={stats[0]?.chain.name ?? "—"}
@@ -188,7 +202,8 @@ export default async function Home() {
               />
               <StatCard
                 label="Active drivechains"
-                value={String(stats.length)}
+                value={String(activeCount)}
+                sub={activeSub}
               />
               <StatCard
                 label="Top contributor"
@@ -228,6 +243,14 @@ export default async function Home() {
                     Fees to L1
                   </th>
                   <th className="px-3 py-2 text-right font-medium">Share</th>
+                  {showTreasury ? (
+                    <th
+                      className="px-3 py-2 text-right font-medium"
+                      title="ECX currently held in the sidechain's L1 treasury output"
+                    >
+                      In sidechain
+                    </th>
+                  ) : null}
                 </tr>
               </thead>
               <tbody>
@@ -252,6 +275,12 @@ export default async function Home() {
                           <div className="text-xs text-neutral-500">
                             slot {r.chain.slot} · {r.chain.description}
                           </div>
+                          {r.activated && r.bmmCommitments === 0 ? (
+                            <div className="mt-1 text-[11px] text-neutral-500">
+                              Activated · no BMM blocks in the last {windowDays}{" "}
+                              {windowDays === 1 ? "day" : "days"}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     </td>
@@ -264,22 +293,41 @@ export default async function Home() {
                     <td className="px-3 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <span className="tabular-nums text-neutral-300">
-                          {formatPct(r.shareOfTotal)}
+                          {r.shareOfTotal > 0 ? formatPct(r.shareOfTotal) : "—"}
                         </span>
                         <span className="h-1.5 w-16 overflow-hidden rounded-full bg-neutral-800">
-                          <span
-                            className="block h-full rounded-full"
-                            style={{
-                              width: `${Math.max(r.shareOfTotal * 100, 2)}%`,
-                              backgroundColor: r.chain.color,
-                            }}
-                          />
+                          {r.shareOfTotal > 0 ? (
+                            <span
+                              className="block h-full rounded-full"
+                              style={{
+                                width: `${Math.max(r.shareOfTotal * 100, 2)}%`,
+                                backgroundColor: r.chain.color,
+                              }}
+                            />
+                          ) : null}
                         </span>
                       </div>
                     </td>
+                    {showTreasury ? (
+                      <td className="px-3 py-3 text-right tabular-nums text-neutral-100">
+                        <TreasuryCell sats={r.treasurySats} />
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
+              {showTreasury && totalTreasurySats !== undefined ? (
+                <tfoot>
+                  <tr className="border-t border-white/[0.12] text-neutral-400">
+                    <td className="px-3 py-3 text-xs font-medium uppercase tracking-[0.08em]" colSpan={4}>
+                      Total held by drivechains
+                    </td>
+                    <td className="px-3 py-3 text-right font-medium tabular-nums text-neutral-100">
+                      <TreasuryCell sats={totalTreasurySats} />
+                    </td>
+                  </tr>
+                </tfoot>
+              ) : null}
             </table>
           </div>
         </section>
@@ -346,6 +394,24 @@ export default async function Home() {
       </div>
     </main>
   );
+}
+
+/**
+ * A treasury balance. Four decimals, not two: a sidechain can hold well under
+ * 0.01 ECX, and rounding that to "0.00" would read as empty.
+ */
+function TreasuryCell({ sats }: { sats: number | null | undefined }) {
+  if (sats === undefined) return <span className="text-neutral-600">—</span>;
+  if (sats === null)
+    return (
+      <span
+        className="text-neutral-500"
+        title="The indexed history doesn't reach back to this sidechain's activation, so its balance can't be derived. Rebuild the store from the ECX fork."
+      >
+        unknown
+      </span>
+    );
+  return <>{formatCoins(sats, 4)}</>;
 }
 
 function StatCard({

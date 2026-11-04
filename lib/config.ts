@@ -55,7 +55,11 @@ export const ECX_GENESIS_HASH =
 //
 // Read from a live ECX enforcer on 2026-11-03, ECX mainnet has FIVE registered
 // slots: 9 Thunder, 24 Elements+, 46 Flush, 130 FreeBank, 131 Tally. Those
-// entries' names and descriptions come from that call. The remaining entries
+// entries' names, descriptions and `activationHeight`s come from that call
+// (the activation heights are the enforcer's own, after each slot's BIP 300
+// proposal collected its acks). Activation is a miner vote, which the indexer
+// does not re-count from L1 — so a newly activated slot appears on the site
+// only once it is added here. Proposals still collecting votes are NOT listed. The remaining entries
 // (2, 4, 98, 99, 255) are NOT registered on ECX; they are kept because the
 // table is only a lookup — an unregistered slot can never appear in the data,
 // and if one registers later its colour is already validated.
@@ -105,6 +109,7 @@ export const KNOWN_DRIVECHAINS: Drivechain[] = [
   },
   {
     slot: 9,
+    activationHeight: 978_324,
     name: "Thunder",
     ticker: "THDR",
     description: "Large & growing blocksize, plus fraud proofs",
@@ -119,6 +124,7 @@ export const KNOWN_DRIVECHAINS: Drivechain[] = [
   },
   {
     slot: 24,
+    activationHeight: 978_708,
     name: "Elements+",
     ticker: "ELEM",
     description:
@@ -127,6 +133,7 @@ export const KNOWN_DRIVECHAINS: Drivechain[] = [
   },
   {
     slot: 46,
+    activationHeight: 978_331,
     name: "Flush",
     ticker: "FLSH",
     description: "Tokens, assets and a DEX on a fast chain over eCash",
@@ -148,6 +155,7 @@ export const KNOWN_DRIVECHAINS: Drivechain[] = [
   },
   {
     slot: 130,
+    activationHeight: 978_341,
     name: "FreeBank",
     ticker: "FBNK",
     description: "Credit-creation drivechain, in the Scottish free-banking lineage",
@@ -155,6 +163,7 @@ export const KNOWN_DRIVECHAINS: Drivechain[] = [
   },
   {
     slot: 131,
+    activationHeight: 978_342,
     name: "Tally",
     ticker: "TLLY",
     description: "Signed records that move money and ownership (spec only so far)",
@@ -168,6 +177,15 @@ export const KNOWN_DRIVECHAINS: Drivechain[] = [
     color: "#7e5596",
   },
 ];
+
+/**
+ * Drivechains activated on ECX mainnet (BIP 300 vote passed), in slot order.
+ * These are listed on the dashboard whether or not they are merge-mining yet —
+ * an activated sidechain with no BMM blocks is still a live slot holding coins.
+ */
+export const ACTIVATED_DRIVECHAINS: Drivechain[] = KNOWN_DRIVECHAINS.filter(
+  (c) => c.activationHeight != null,
+);
 
 /** The validated palette, in the order it was checked for adjacent contrast. */
 const PALETTE = KNOWN_DRIVECHAINS.map((c) => c.color);

@@ -56,6 +56,25 @@ export function ensureSchema(d: DatabaseSync = getDb()): void {
     );
     CREATE INDEX IF NOT EXISTS commitments_slot_idx ON commitments (slot);
 
+    -- Raw BIP 300 treasury events, per block (lib/treasury.ts replays them).
+    -- Cascade with blocks so a reorg prune removes them too.
+    CREATE TABLE IF NOT EXISTS treasury_outputs (
+      height     INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE,
+      tx_index   INTEGER NOT NULL,
+      txid       TEXT NOT NULL CHECK (length(txid) = 64),
+      vout       INTEGER NOT NULL,
+      slot       INTEGER NOT NULL CHECK (slot BETWEEN 0 AND 255),
+      value_sats INTEGER NOT NULL CHECK (value_sats >= 0),
+      PRIMARY KEY (txid, vout)
+    );
+    CREATE TABLE IF NOT EXISTS treasury_spends (
+      height   INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE,
+      tx_index INTEGER NOT NULL,
+      txid     TEXT NOT NULL CHECK (length(txid) = 64),
+      vout     INTEGER NOT NULL,
+      PRIMARY KEY (txid, vout)
+    );
+
     CREATE TABLE IF NOT EXISTS meta (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
