@@ -62,6 +62,11 @@ export const TREASURY_SCRIPT_RE = /^b701([0-9a-f]{2})51$/i;
  *   3 = strict commitment parsing + hardened fee attribution
  *   4 = also records sidechain treasury outputs and their spends
  *   5 = also records BIP 300 sidechain proposals (M1) and acks (M2) (current)
+ *
+ * ⚠ A bump forces a FULL rebuild from the ECX fork. The production node is
+ * pruned and loses fork-era blocks after a few months, so the rebuild may have
+ * to happen on a machine with an unpruned node, then be uploaded — see
+ * "Rebuilding after a parser change" in deploy/README.md.
  */
 export const PARSER_VERSION = 5;
 

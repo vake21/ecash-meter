@@ -543,9 +543,10 @@ curl -s https://example.com/api/health | python3 -m json.tool
 bitcoin-cli -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash \
   getblockchaininfo | grep -E "blocks|headers|verificationprogress|pruned|size_on_disk"
 
-# back up the store — under pruning it is no longer rebuildable from the node
-sudo -u ecashmeter sqlite3 /var/lib/ecashmeter/ecash-meter.sqlite \
-  ".backup '/var/backups/ecashmeter/ecash-meter-$(date +%F).sqlite'"
+# backups: when is the next one, and did the last one work?
+systemctl list-timers ecashmeter-backup.timer
+journalctl -u ecashmeter-backup --since "2 days ago"
+ls -l /var/lib/ecashmeter/backups/
 ```
 
 Point an uptime monitor at `/api/health` and alert on non-200. It returns 503
@@ -566,19 +567,127 @@ systemctl restart ecashmeter
 The store lives in `/var/lib/ecashmeter`, outside the app directory, so a
 redeploy never touches it.
 
-**Rebuild the store** (needed when `PARSER_VERSION` in `lib/bmm.ts` changes — the
-indexer refuses to append across versions and tells you so):
+### Backups
+
+**The store is not disposable on this server.** The node is pruned, so once the
+blocks from around the ECX fork are pruned away (roughly three months after the
+fork at the current pace), the indexer can no longer rebuild the store here —
+and a store that doesn't reach the fork shows treasury balances and proposal
+votes as "unknown". A daily backup covers losing the file (disk failure, an
+accidental `rm`, a rebuilt server).
+
+`deploy/backup-db.mjs` takes a consistent snapshot with SQLite's `VACUUM INTO`
+(safe while the indexer is writing), checks it with `PRAGMA integrity_check`,
+and keeps the newest 14 as `/var/lib/ecashmeter/backups/ecash-meter-YYYY-MM-DD.sqlite`.
+It needs only Node's built-in SQLite and imports nothing from the app, so it is
+installed outside the checkout and survives redeploys.
+
+Install (once):
+
+```bash
+install -D -m 0755 /srv/ecashmeter/deploy/backup-db.mjs /usr/local/lib/ecashmeter/backup-db.mjs
+cp /srv/ecashmeter/deploy/systemd/ecashmeter-backup.{service,timer} /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now ecashmeter-backup.timer
+systemctl start ecashmeter-backup.service    # take the first one now
+journalctl -u ecashmeter-backup -n 5         # "[backup] … N blocks, tip …"
+```
+
+**Keep a copy off the server**, so the backups survive losing the VPS itself.
+From your own computer:
+
+```bash
+mkdir -p ~/ecashmeter-backups
+rsync -av root@<server>:/var/lib/ecashmeter/backups/ ~/ecashmeter-backups/
+```
+
+**Restore** a backup (the indexer resumes from the backup's tip; those recent
+blocks are still on the node, so it catches up on its own):
 
 ```bash
 systemctl stop ecashmeter-index.timer
-rm /var/lib/ecashmeter/ecash-meter.sqlite*
-systemctl start ecashmeter-index.service   # reads the EnvironmentFile properly
+systemctl is-active ecashmeter-index.service   # wait until "inactive"
+mv /var/lib/ecashmeter/ecash-meter.sqlite /var/lib/ecashmeter/ecash-meter.sqlite.broken
+rm -f /var/lib/ecashmeter/ecash-meter.sqlite-wal /var/lib/ecashmeter/ecash-meter.sqlite-shm
+install -o ecashmeter -g ecashmeter -m 0640 \
+  /var/lib/ecashmeter/backups/ecash-meter-YYYY-MM-DD.sqlite /var/lib/ecashmeter/ecash-meter.sqlite
+systemctl start ecashmeter-index.service       # catch up now
+systemctl start ecashmeter-index.timer
+curl -s https://example.com/api/health | python3 -m json.tool
+```
+
+A backup only helps if it is newer than the node's prune horizon: if the node
+has already pruned the blocks between the backup's tip and today, the indexer
+cannot fill that gap. Daily backups keep the gap to a day.
+
+### Rebuilding after a parser change — use an UNPRUNED node
+
+When `PARSER_VERSION` in `lib/bmm.ts` changes, the indexer refuses to append to
+the old store, and the store has to be rebuilt by re-reading **every block since
+the ECX fork**. A backup cannot help — it holds the old parser's data.
+
+**Before the prune horizon** (the node still has fork-era blocks) rebuild in
+place:
+
+```bash
+systemctl stop ecashmeter-index.timer
+mv /var/lib/ecashmeter/ecash-meter.sqlite /var/lib/ecashmeter/ecash-meter.sqlite.old
+rm -f /var/lib/ecashmeter/ecash-meter.sqlite-wal /var/lib/ecashmeter/ecash-meter.sqlite-shm
+systemctl start ecashmeter-index.service   # full backfill from the fork; minutes
 systemctl start ecashmeter-index.timer
 ```
 
-The DB is a disposable derived cache; backing it up is optional. Rebuilding
-re-fetches the backfill range from the node, which on mainnet is minutes rather
-than instant — and it cannot reach further back than the node's prune horizon.
+**After the prune horizon this server cannot do it.** Check with
+`bitcoin-cli … getblockchaininfo` → `pruneheight`: if it is above 973,728, the
+fork-era blocks are gone. Rebuild on any machine with an **unpruned** ECX node
+(for example a full node on your own computer) and upload the result:
+
+1. **On the unpruned machine**, check out the SAME commit the server will run,
+   and build into a fresh file (the fork clamp makes the huge backfill mean
+   "from the fork"):
+
+   ```bash
+   ECASH_METER_DB=.data/rebuild.sqlite \
+   ECASH_RPC_URL=http://127.0.0.1:<rpc port> \
+   ECASH_RPC_USER=__cookie__ ECASH_RPC_PASS=$(cut -d: -f2- <datadir>/.cookie) \
+   ECASH_BACKFILL_BLOCKS=1000000 ECASH_RPC_TIMEOUT_MS=120000 \
+   npm run index
+   ```
+
+   It refuses anything that isn't ECX mainnet (fork-block check), and it took
+   ~12 minutes for the first ~9,400 post-fork blocks; it grows with the chain.
+
+2. **Make one standalone, verified file** with the backup script:
+
+   ```bash
+   ECASH_METER_DB=.data/rebuild.sqlite ECASH_BACKUP_DIR=.data/upload \
+     node deploy/backup-db.mjs
+   ```
+
+3. **Upload it, deploy the matching code, and swap it in.** Deploy and swap
+   together: between the two, the site shows "Data temporarily unavailable"
+   (parser mismatch).
+
+   ```bash
+   scp .data/upload/ecash-meter-YYYY-MM-DD.sqlite root@<server>:/tmp/rebuild.sqlite
+   # on the server:
+   systemctl stop ecashmeter-index.timer
+   cd /srv/ecashmeter && sudo -u ecashmeter git pull && sudo -u ecashmeter npm ci --include=dev \
+     && sudo -u ecashmeter npm run build
+   mv /var/lib/ecashmeter/ecash-meter.sqlite /var/lib/ecashmeter/ecash-meter.sqlite.old
+   rm -f /var/lib/ecashmeter/ecash-meter.sqlite-wal /var/lib/ecashmeter/ecash-meter.sqlite-shm
+   install -o ecashmeter -g ecashmeter -m 0640 /tmp/rebuild.sqlite /var/lib/ecashmeter/ecash-meter.sqlite
+   systemctl restart ecashmeter
+   systemctl start ecashmeter-index.service    # catches up from the upload's tip
+   systemctl start ecashmeter-index.timer
+   ```
+
+   The catch-up only needs blocks after the upload's tip, which the pruned node
+   still has — so the pruned server and the unpruned machine together can always
+   rebuild.
+
+**Keep that unpruned node.** Once the server is past its prune horizon, an
+unpruned ECX node somewhere is the only way to rebuild after a parser change.
 
 
 ---

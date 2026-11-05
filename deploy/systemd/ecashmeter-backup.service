@@ -1,0 +1,37 @@
+# /etc/systemd/system/ecashmeter-backup.service
+#
+# One backup of the SQLite store. Driven by ecashmeter-backup.timer — enable the
+# timer, not this unit.
+#
+# The script is installed OUTSIDE the code checkout (/usr/local/lib/ecashmeter),
+# so it keeps running across deploys and does not depend on the app's code. It
+# needs only Node's built-in node:sqlite.
+#
+# Backups land in /var/lib/ecashmeter/backups as ecash-meter-YYYY-MM-DD.sqlite,
+# newest 14 kept. See "Backups" in deploy/README.md for restoring one.
+
+[Unit]
+Description=eCash Meter — daily backup of the SQLite store
+Documentation=https://github.com/vake21/ecash-meter
+
+[Service]
+Type=oneshot
+User=ecashmeter
+Group=ecashmeter
+# site.env carries ECASH_METER_DB and no secrets — the backup needs nothing else.
+EnvironmentFile=/etc/ecashmeter/site.env
+Environment=ECASH_BACKUP_DIR=/var/lib/ecashmeter/backups
+Environment=ECASH_BACKUP_KEEP=14
+ExecStart=/usr/bin/node /usr/local/lib/ecashmeter/backup-db.mjs
+TimeoutStartSec=600
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ecashmeter
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true

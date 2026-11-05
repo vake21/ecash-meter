@@ -1,0 +1,18 @@
+# /etc/systemd/system/ecashmeter-backup.timer
+#
+#   systemctl enable --now ecashmeter-backup.timer
+#   systemctl list-timers ecashmeter-backup.timer      # next run
+#   journalctl -u ecashmeter-backup.service            # results
+
+[Unit]
+Description=Back up the eCash Meter store once a day
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=15min
+# A run missed while the server was off happens at the next boot.
+Persistent=true
+Unit=ecashmeter-backup.service
+
+[Install]
+WantedBy=timers.target

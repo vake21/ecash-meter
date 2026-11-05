@@ -132,8 +132,9 @@ once. Chunks commit in ascending order, so the store is always a valid contiguou
 
 ## Rebuilding the store
 
-The SQLite file is a **derived cache** — every value in it is re-computed from the node,
-so it is safe to delete at any time. To rebuild from scratch:
+The SQLite file is a **derived cache** — every value in it is re-computed from the node.
+On a machine whose node holds every block since the ECX fork, it is safe to delete at any
+time. To rebuild from scratch:
 
 ```bash
 rm .data/ecash-meter.sqlite && npm run index
@@ -143,6 +144,11 @@ The indexer stamps each database with the fee-attribution parser version it was 
 with. If you upgrade to a build whose fee math changed, the indexer detects the mismatch
 and **refuses to append to the old cache** (so stale fees can't silently linger) — it
 prints the `rm … && npm run index` command above. Rebuilding re-fetches the backfill range from the node.
+
+**A pruned node can only rebuild while it still holds the blocks back to the ECX fork.**
+After that, rebuild on a machine with an unpruned ECX node and upload the file, and keep
+daily backups of the server's store — see "Backups" and "Rebuilding after a parser change"
+in [deploy/README.md](deploy/README.md#backups).
 
 ## Fee attribution: current method and its limits
 
