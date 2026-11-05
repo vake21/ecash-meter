@@ -45,7 +45,7 @@ export default async function Home() {
   // The charts sit side by side and share one legend (same colour per chain in
   // every chart). The legend lists each chain that appears in ANY of them.
   const charts: { metric: ChartMetric; title: string }[] = [
-    ...(!isBmm ? [{ metric: "fees" as const, title: "Fees fed to L1" }] : []),
+    ...(!isBmm ? [{ metric: "fees" as const, title: "Estimated fees to L1" }] : []),
     { metric: "bmm", title: "BMM blocks" },
     ...(showTreasury
       ? [
@@ -305,7 +305,7 @@ export default async function Home() {
                     BMM blocks
                   </th>
                   <th className="px-3 py-2 text-right font-medium">
-                    Fees to L1
+                    Estimated fees to L1
                   </th>
                   <th className="px-3 py-2 text-right font-medium">Share</th>
                   {showTreasury ? (
