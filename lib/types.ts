@@ -94,9 +94,10 @@ export interface DrivechainStats {
 export interface DashboardData {
   /**
    * Where the data came from. "ecx" is eCash mainnet — the only chain this
-   * project indexes; "mock" is the deterministic placeholder dataset.
+   * project indexes; "demo" is the sample dataset shown only in explicit demo
+   * mode (ECASH_DEMO=1).
    */
-  network: "ecx" | "mock";
+  network: "ecx" | "demo";
   /**
    * Which metric is the meaningful headline for this dataset:
    *  - "fees": fees fed to L1 (any window containing a paid BMM bid)

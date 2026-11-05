@@ -10,11 +10,11 @@ import type {
 // same numbers on every server/client pass (no hydration mismatch) and so the
 // mockup is reproducible. A small seeded PRNG drives the variation.
 //
-// This module mimics the OUTPUT of aggregating BMM bids per drivechain, and is
-// only a fallback for local work and for an empty store — the real paths
-// (lib/store.ts, lib/node.ts) return the same DashboardData shape, so the UI is
-// identical either way. It deliberately shows every KNOWN drivechain busy at
-// once, which no real chain need look like.
+// This module mimics the OUTPUT of aggregating BMM bids per drivechain. It is
+// served ONLY in explicit demo mode (ECASH_DEMO=1, see lib/dashboard.ts) and is
+// never a fallback for missing or broken data — the page labels it
+// "DEMO — SAMPLE DATA" throughout. It deliberately shows every KNOWN drivechain
+// busy at once, which no real chain need look like.
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -91,13 +91,13 @@ function buildStats(): DrivechainStats[] {
   return raw;
 }
 
-export function getMockDashboardData(): DashboardData {
+export function getDemoDashboardData(): DashboardData {
   const stats = buildStats();
-  // Same metric-selection / share / ranking policy as the stored and live paths.
+  // Same metric-selection / share / ranking policy as the stored path.
   const { metric, grandTotalFeesSats, grandTotalBmmCommitments } =
     finalizeStats(stats);
   return {
-    network: "mock",
+    network: "demo",
     metric,
     tipHeight: 892_143,
     windowDays: WINDOW_DAYS,

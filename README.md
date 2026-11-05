@@ -80,7 +80,40 @@ npm run index               # scan the node and populate the SQLite store
 npm run dev                 # start the site at http://localhost:3000
 ```
 
-Without a node, set `ECASH_SOURCE=mock` in `.env.local` to run against placeholder data.
+Without a node, set `ECASH_DEMO=1` in `.env.local` to work on the UI against sample data.
+That is a development setting only — see [Production setup](#production-setup).
+
+## Production setup
+
+One ECX mainnet node, one indexer, one SQLite file, one website:
+
+```
+ECX node ──RPC──▶ indexer (timer) ──writes──▶ SQLite ◀──reads── website
+```
+
+- **The website reads only the SQLite store.** It has no node connection and no RPC
+  credentials, so it keeps serving the saved data while the node or indexer is down. The
+  header labels it **SAVED · ECX MAINNET DATA** with the latest indexed block's height and
+  time, and warns when no new block has been indexed for 30 minutes.
+- **Before serving anything, it validates the store:** the ECX fork-block stamp, the
+  `network` stamp and the parser version must all match this code — the same identity the
+  indexer verifies against the node and stamps in.
+- **If the store is missing, empty, unreadable or fails those checks, the page shows
+  "Data temporarily unavailable"** with no totals, charts or rankings. It never falls back
+  to sample data. The reason is written to the server log (once per change, with the file
+  path and raw error) and reported by `/api/health`.
+- **`/api/health`** uses the same loader as the page. It returns `200` only for fresh,
+  validated data. Otherwise it returns `503`, with `status` set to `stale`, `missing`,
+  `empty`, `unreadable`, `chain-mismatch`, `network-mismatch`, `parser-mismatch` or
+  `demo`, and `dashboard` set to what the page is showing (`saved`, `unavailable` or
+  `demo`). A stale store still shows its saved data, but reports `503` so monitoring
+  catches a stalled indexer. The response carries no file paths or error text, only
+  reason codes and stored/expected stamps.
+- **Demo mode (`ECASH_DEMO=1`) is for development only.** It labels every view
+  "DEMO — SAMPLE DATA" and makes `/api/health` return `503 demo`, so it cannot pass as
+  production. A data failure never turns it on.
+
+See [deploy/README.md](deploy/README.md) for the systemd units and environment files.
 
 ## Keeping data fresh
 
@@ -140,10 +173,10 @@ All settings live in `.env.local` (see `.env.example` for the full list). Key on
 
 | Variable | Purpose |
 |---|---|
-| `ECASH_SOURCE` | `db` (stored history), `live` (scan per request), or `mock` |
-| `ECASH_METER_DB` | Path to the SQLite file (default `./.data/ecash-meter.sqlite`) |
-| `ECASH_RPC_URL` / `ECASH_RPC_USER` / `ECASH_RPC_PASS` | Mainchain JSON-RPC connection |
-| `ECASH_SCAN_BLOCKS` | Blocks to backfill on the indexer's first run |
+| `ECASH_METER_DB` | Path to the SQLite file (default `./.data/ecash-meter.sqlite`); read by the site, written by the indexer |
+| `ECASH_DEMO` | `1` = show labelled sample data instead of the store. Development only |
+| `ECASH_RPC_URL` / `ECASH_RPC_USER` / `ECASH_RPC_PASS` | Indexer only: the ECX mainnet node's JSON-RPC |
+| `ECASH_BACKFILL_BLOCKS` | Indexer only: blocks to backfill on the first run (clamps to the ECX fork) |
 | `ECASH_INDEX_CHUNK` | Blocks fetched + committed per transaction (default 250) |
 
 ## Tech stack

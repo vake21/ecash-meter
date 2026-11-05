@@ -24,10 +24,9 @@ import { closeDb } from "../lib/db";
 async function main() {
   const startedAt = Date.now();
 
-  // Nudge operators off the placeholder credentials in real (non-mock) runs.
+  // Nudge operators off the placeholder credentials.
   const cfg = getRpcConfig();
-  const source = (process.env.ECASH_SOURCE ?? "").toLowerCase();
-  if (cfg.usingDefaultCredentials && source !== "mock") {
+  if (cfg.usingDefaultCredentials) {
     console.warn(
       "[index] using default RPC credentials (user/password) — set " +
         "ECASH_RPC_USER / ECASH_RPC_PASS in .env.local for production.",

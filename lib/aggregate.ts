@@ -1,5 +1,5 @@
 // Single source of truth for headline-metric selection, per-chain share, and
-// ranking. Shared by the stored (lib/store.ts), live (lib/node.ts), and mock
+// ranking. Shared by the stored (lib/store.ts) and demo
 // (lib/mock-data.ts) paths so they cannot drift apart — the bug this fixes was
 // the store choosing "fees" as the headline metric while still computing each
 // chain's share and sort order from BMM commitment counts, so `stats[0]` and the

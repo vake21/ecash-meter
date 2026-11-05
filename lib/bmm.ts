@@ -1,6 +1,5 @@
-// Shared BMM (blind-merged-mining) parsing — the single source of truth used by
-// BOTH the live node scan (lib/node.ts) and the persistent indexer (scripts/index.ts),
-// so the two paths can never disagree on how a block is interpreted.
+// Shared BMM (blind-merged-mining) parsing — the single source of truth for how
+// the indexer (lib/indexer.ts) interprets a block.
 //
 // ─── BMM ON-CHAIN FORMAT (verified against live eCash chain data, 2026-11-01) ───
 // Each mainchain coinbase carries one OP_RETURN output PER merge-mined slot:

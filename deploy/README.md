@@ -203,7 +203,6 @@ is the same thing — Core's cookie file *is* a credential pair. In `.env.local`
 
 ```bash
 D=/path/to/your/ecash/datadir
-ECASH_SOURCE=db
 ECASH_METER_DB=.data/rehearsal.sqlite
 ECASH_RPC_URL=http://127.0.0.1:8532          # 18302 under BitWindow
 ECASH_RPC_USER=$(cut -d: -f1  "$D/.cookie")  # literally __cookie__
@@ -632,7 +631,6 @@ distinct `ECASH_METER_DB` path so the live signet store is untouched:
 
 ```bash
 sudo -u ecashmeter env \
-  ECASH_SOURCE=db \
   ECASH_METER_DB=/var/lib/ecashmeter/ecx.sqlite \
   ECASH_RPC_URL=http://127.0.0.1:8532 \
   ECASH_RPC_USER=ecashmeter ECASH_RPC_PASS=... \

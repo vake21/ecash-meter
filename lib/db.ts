@@ -15,13 +15,27 @@ const DEFAULT_PATH = ".data/ecash-meter.sqlite";
 
 let db: DatabaseSync | null = null;
 
+/** The configured store path (ECASH_METER_DB, else the default). */
+export function getDbPath(): string {
+  return process.env.ECASH_METER_DB ?? DEFAULT_PATH;
+}
+
 export function getDb(): DatabaseSync {
   if (!db) {
-    const path = process.env.ECASH_METER_DB ?? DEFAULT_PATH;
+    const path = getDbPath();
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-    db = new DatabaseSync(path);
-    db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
-    ensureSchema(db);
+    const handle = new DatabaseSync(path);
+    try {
+      handle.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+      ensureSchema(handle);
+    } catch (err) {
+      // Don't cache a handle that failed to initialise (e.g. a file that isn't
+      // SQLite): the next call retries, so a repaired store recovers without a
+      // restart.
+      handle.close();
+      throw err;
+    }
+    db = handle;
   }
   return db;
 }

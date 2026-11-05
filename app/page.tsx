@@ -1,4 +1,4 @@
-import { getDashboardData } from "@/lib/node";
+import { loadDashboard } from "@/lib/dashboard";
 import { hasLogo, hasWallpaper, LOGO_FILE, WALLPAPER_FILE } from "@/lib/branding";
 import { credit, learnLinks } from "@/lib/site-links";
 import { computeFreshness } from "@/lib/freshness";
@@ -8,13 +8,36 @@ import FeeChart, { ChartLegend, type ChartMetric } from "@/components/FeeChart";
 import HeaderMotif from "@/components/HeaderMotif";
 import { feeFormatter, formatCoins, formatInt, formatPct } from "@/lib/format";
 
-// Data is read from the node at request time (behind a short TTL cache in the
-// data layer), so don't prerender this route at build.
+// Reads the SQLite store on every request (never the node), so don't prerender
+// this route at build.
 export const dynamic = "force-dynamic";
 
 
 export default async function Home() {
-  const data = await getDashboardData();
+  const dashboard = await loadDashboard();
+
+  // No figures at all when the store can't be trusted: no totals, charts,
+  // rankings or activity — and never demo data in their place. The reason goes
+  // to the server log and /api/health, not to the public page.
+  if (dashboard.kind === "unavailable") {
+    return (
+      <PageShell badges={<StatusBadge tone="warn" label="DATA UNAVAILABLE" />}>
+        <section className="panel rounded-2xl px-6 py-14 text-center">
+          <h2 className="text-xl font-semibold tracking-tight text-neutral-100">
+            Data temporarily unavailable
+          </h2>
+          <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-neutral-400">
+            The meter&apos;s saved eCash mainnet data can&apos;t be shown right
+            now. Figures will return once the data store is available again.
+          </p>
+        </section>
+        <SiteFooter note="No figures are shown while the data store is unavailable." />
+      </PageShell>
+    );
+  }
+
+  const isDemo = dashboard.kind === "demo";
+  const data = dashboard.data;
   const {
     stats,
     grandTotalFeesSats,
@@ -22,7 +45,6 @@ export default async function Home() {
     tipHeight,
     windowDays,
     blocksScanned,
-    network,
     metric,
     note,
     lastBlockTime,
@@ -38,8 +60,8 @@ export default async function Home() {
   const activeSub =
     activatedCount != null ? `of ${activatedCount} activated` : undefined;
 
-  // Treasury column appears only when the data source tracks treasuries (the
-  // DB path does; the live-scan and mock paths don't).
+  // Treasury column appears only when the data tracks treasuries (saved data
+  // does; the demo dataset doesn't).
   const showTreasury = stats.some((r) => r.treasurySats !== undefined);
 
   // The charts sit side by side and share one legend (same colour per chain in
@@ -83,105 +105,62 @@ export default async function Home() {
 
   // Data freshness (computed in the data layer, not during render): flag stale so
   // an old indexer's data is never silently presented as current.
-  const { isStale, label: freshness } = computeFreshness(lastBlockTime);
+  // Demo data has no real block time, so no freshness either.
+  const { isStale, label: freshness } = isDemo
+    ? { isStale: false, label: null }
+    : computeFreshness(lastBlockTime);
+  // The saved data's latest block, as a fixed UTC stamp ("2026-11-04 20:01 UTC").
+  const blockStamp =
+    !isDemo && lastBlockTime != null
+      ? new Date(lastBlockTime * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC"
+      : null;
 
-  // `isolate` on <main> is load-bearing: without a stacking context there, the
-  // ambient layer (z-index -10) joins the ROOT stacking context and main's
-  // opaque bg-neutral-950 paints straight over it, hiding the wallpaper.
+  const badges = isDemo ? (
+    <StatusBadge tone="demo" label="DEMO — SAMPLE DATA" />
+  ) : (
+    <>
+      <StatusBadge tone="saved" label="SAVED · ECX MAINNET DATA" />
+      <span className="rounded-full bg-white/[0.06] px-3 py-1.5 text-neutral-400 ring-1 ring-white/10">
+        block #{formatInt(tipHeight)}
+        {blockStamp ? ` · ${blockStamp}` : ""}
+      </span>
+      {freshness ? (
+        <span
+          className={`rounded-full px-3 py-1.5 font-medium ring-1 ${
+            isStale
+              ? "bg-amber-500/15 text-amber-300 ring-amber-500/30"
+              : "bg-white/[0.06] text-neutral-400 ring-white/10"
+          }`}
+        >
+          {isStale ? "stale · " : "latest block "}
+          {freshness}
+        </span>
+      ) : null}
+    </>
+  );
+
   return (
-    <main className="relative isolate min-h-screen bg-neutral-950 text-neutral-100">
-      {/* Page-level ambient wash, fixed so it stays put while the page scrolls.
-          Sits behind everything and never intercepts pointer events.
-
-          Layers paint first-listed on top. The brand gradients sit ABOVE the
-          scrim so they keep tinting the page, while the scrim dims only the
-          wallpaper beneath it. The scrim is bottom-weighted on the assumption
-          that artwork is darkest at the top, which is where the header sits and
-          where a bright band would do the most damage to legibility.
-
-          With no wallpaper present the gradients alone are the background, and
-          the scrim is dropped — it exists only to tame the image. */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none fixed inset-0 -z-10"
-        style={{
-          background: [
-            "radial-gradient(1100px 520px at 12% -8%, rgba(25,158,112,0.13), transparent 62%)",
-            "radial-gradient(900px 460px at 88% -4%, rgba(201,133,0,0.07), transparent 58%)",
-            ...(hasWallpaper
-              ? [
-                  "linear-gradient(to bottom, rgba(10,10,10,0.30), rgba(10,10,10,0.58) 45%, rgba(10,10,10,0.80))",
-                  `url('/${WALLPAPER_FILE}') center center / cover no-repeat`,
-                ]
-              : []),
-          ].join(","),
-        }}
-      />
-      <div className="mx-auto max-w-6xl px-6 py-12 sm:py-14">
-        {/* header */}
-        <header className="relative isolate mb-10 flex flex-wrap items-end justify-between gap-5 pb-4">
-          <HeaderMotif />
-          <div>
-            {/* When a logo is supplied its wordmark IS the name, so the image
-                carries the h1's accessible name rather than repeating it as text
-                beside it. With no logo the h1 is the wordmark.
-
-                A plain <img> rather than next/image on purpose: the file is
-                deployer-supplied with unknown dimensions, and next/image needs
-                width/height up front for a non-imported source. Letting the
-                browser use the file's real intrinsic ratio is correct for any
-                asset, and it keeps sharp off the server's runtime path. */}
-            <h1>
-              {hasLogo ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={`/${LOGO_FILE}`}
-                  alt="eCash Meter"
-                  className="h-12 w-auto sm:h-14"
-                />
-              ) : (
-                <span className="text-3xl font-semibold tracking-tight text-neutral-50 sm:text-4xl">
-                  eCash Meter
-                </span>
-              )}
-            </h1>
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            <span
-              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 font-medium ring-1 ${
-                network === "mock"
-                  ? "bg-amber-500/15 text-amber-300 ring-amber-500/30"
-                  : "bg-brand/15 text-brand ring-brand/35"
-              }`}
-            >
-              <span
-                aria-hidden="true"
-                className={`h-1.5 w-1.5 rounded-full ${
-                  network === "mock" ? "bg-amber-400" : "bg-brand"
-                }`}
-              />
-              {network === "mock" ? "MOCK DATA" : "LIVE · ECX MAINNET"}
-            </span>
-            <span className="rounded-full bg-white/[0.06] px-3 py-1.5 text-neutral-400 ring-1 ring-white/10">
-              tip #{formatInt(tipHeight)}
-            </span>
-            {freshness ? (
-              <span
-                className={`rounded-full px-3 py-1.5 font-medium ring-1 ${
-                  isStale
-                    ? "bg-amber-500/15 text-amber-300 ring-amber-500/30"
-                    : "bg-white/[0.06] text-neutral-400 ring-white/10"
-                }`}
-                title={`Latest indexed block time: ${new Date(
-                  (lastBlockTime ?? 0) * 1000,
-                ).toISOString()}`}
-              >
-                {isStale ? "stale · " : "updated "}
-                {freshness}
-              </span>
-            ) : null}
-          </div>
-        </header>
+    <PageShell badges={badges}>
+      {isDemo ? (
+        <div
+          role="note"
+          className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+        >
+          <strong className="font-semibold">DEMO — SAMPLE DATA.</strong> Every
+          figure on this page is invented for demonstration. None of it comes
+          from the eCash chain.
+        </div>
+      ) : isStale ? (
+        <div
+          role="note"
+          className="mb-6 rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-200/90"
+        >
+          Showing saved mainnet data up to block #{formatInt(tipHeight)}
+          {blockStamp ? `, mined ${blockStamp}` : ""}. No newer block has been
+          indexed for {freshness?.replace(/ ago$/, "")}, so these figures may be
+          out of date.
+        </div>
+      ) : null}
 
         {note ? (
           <div className="mb-6 rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-200/90">
@@ -403,67 +382,14 @@ export default async function Home() {
           />
         ) : null}
 
-        <footer className="mt-12 border-t border-white/[0.07] pt-7">
-          {/* Further reading — supplied per deployment via site.local.json, so a
-              fork ships with no external links at all. */}
-          {learnLinks.length > 0 ? (
-            <nav
-              aria-label="Learn"
-              className="mb-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-2"
-            >
-              <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-neutral-500">
-                Learn
-              </span>
-              {learnLinks.map((l) => (
-                <a
-                  key={l.href}
-                  href={l.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-neutral-400 transition-colors hover:text-brand"
-                >
-                  {l.label}
-                  <span aria-hidden="true" className="ml-1 text-brand">
-                    ↗
-                  </span>
-                </a>
-              ))}
-            </nav>
-          ) : null}
-          <p className="text-center text-xs text-neutral-600">
-            {network === "mock"
-              ? "Mockup with placeholder data · numbers are illustrative until wired to a live eCash node."
-              : `Live from eCash (ECX) mainnet · scanned ${formatInt(
-                  blocksScanned,
-                )} blocks up to tip #${formatInt(tipHeight)}.`}
-          </p>
-
-          {/* Optional "project of X" credit, also from site.local.json. */}
-          {credit ? (
-            <a
-              href={credit.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-8 flex items-center justify-center gap-3 text-sm text-neutral-400 transition-colors hover:text-neutral-200"
-            >
-              {credit.hasLogo ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={`/${credit.logo}`}
-                  alt=""
-                  aria-hidden="true"
-                  className="h-9 w-9 rounded-[7px] ring-1 ring-white/10"
-                />
-              ) : null}
-              {credit.label}
-              <span aria-hidden="true" className="text-brand">
-                ↗
-              </span>
-            </a>
-          ) : null}
-        </footer>
-      </div>
-    </main>
+      <SiteFooter
+        note={
+          isDemo
+            ? "DEMO — SAMPLE DATA · every figure on this page is invented for demonstration."
+            : `Saved eCash (ECX) mainnet data · ${formatInt(blocksScanned)} blocks indexed, up to block #${formatInt(tipHeight)}${blockStamp ? ` mined ${blockStamp}` : ""}.`
+        }
+      />
+    </PageShell>
   );
 }
 
@@ -656,5 +582,168 @@ function StatCard({
       </div>
       {sub ? <div className="mt-1.5 text-xs text-neutral-500">{sub}</div> : null}
     </div>
+  );
+}
+
+/** Header status pill. Tone: saved data, demo data, or no data. */
+function StatusBadge({
+  tone,
+  label,
+}: {
+  tone: "saved" | "demo" | "warn";
+  label: string;
+}) {
+  const styles =
+    tone === "saved"
+      ? ["bg-brand/15 text-brand ring-brand/35", "bg-brand"]
+      : ["bg-amber-500/15 text-amber-300 ring-amber-500/30", "bg-amber-400"];
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 font-medium ring-1 ${styles[0]}`}
+    >
+      <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${styles[1]}`} />
+      {label}
+    </span>
+  );
+}
+
+/**
+ * The page frame: ambient background, header with the wordmark, and a slot for
+ * the status badges. Shared by the data, demo and unavailable views.
+ */
+function PageShell({
+  badges,
+  children,
+}: {
+  badges: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  // `isolate` on <main> is load-bearing: without a stacking context there, the
+  // ambient layer (z-index -10) joins the ROOT stacking context and main's
+  // opaque bg-neutral-950 paints straight over it, hiding the wallpaper.
+  return (
+    <main className="relative isolate min-h-screen bg-neutral-950 text-neutral-100">
+      {/* Page-level ambient wash, fixed so it stays put while the page scrolls.
+          Sits behind everything and never intercepts pointer events.
+
+          Layers paint first-listed on top. The brand gradients sit ABOVE the
+          scrim so they keep tinting the page, while the scrim dims only the
+          wallpaper beneath it. The scrim is bottom-weighted on the assumption
+          that artwork is darkest at the top, which is where the header sits and
+          where a bright band would do the most damage to legibility.
+
+          With no wallpaper present the gradients alone are the background, and
+          the scrim is dropped — it exists only to tame the image. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 -z-10"
+        style={{
+          background: [
+            "radial-gradient(1100px 520px at 12% -8%, rgba(25,158,112,0.13), transparent 62%)",
+            "radial-gradient(900px 460px at 88% -4%, rgba(201,133,0,0.07), transparent 58%)",
+            ...(hasWallpaper
+              ? [
+                  "linear-gradient(to bottom, rgba(10,10,10,0.30), rgba(10,10,10,0.58) 45%, rgba(10,10,10,0.80))",
+                  `url('/${WALLPAPER_FILE}') center center / cover no-repeat`,
+                ]
+              : []),
+          ].join(","),
+        }}
+      />
+      <div className="mx-auto max-w-6xl px-6 py-12 sm:py-14">
+        {/* header */}
+        <header className="relative isolate mb-10 flex flex-wrap items-end justify-between gap-5 pb-4">
+          <HeaderMotif />
+          <div>
+            {/* When a logo is supplied its wordmark IS the name, so the image
+                carries the h1's accessible name rather than repeating it as text
+                beside it. With no logo the h1 is the wordmark.
+
+                A plain <img> rather than next/image on purpose: the file is
+                deployer-supplied with unknown dimensions, and next/image needs
+                width/height up front for a non-imported source. Letting the
+                browser use the file's real intrinsic ratio is correct for any
+                asset, and it keeps sharp off the server's runtime path. */}
+            <h1>
+              {hasLogo ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={`/${LOGO_FILE}`}
+                  alt="eCash Meter"
+                  className="h-12 w-auto sm:h-14"
+                />
+              ) : (
+                <span className="text-3xl font-semibold tracking-tight text-neutral-50 sm:text-4xl">
+                  eCash Meter
+                </span>
+              )}
+            </h1>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            {badges}
+          </div>
+        </header>
+        {children}
+      </div>
+    </main>
+  );
+}
+
+/** Footer: further-reading links, a status line, and the optional credit. */
+function SiteFooter({ note }: { note: string }) {
+  return (
+    <footer className="mt-12 border-t border-white/[0.07] pt-7">
+          {/* Further reading — supplied per deployment via site.local.json, so a
+              fork ships with no external links at all. */}
+          {learnLinks.length > 0 ? (
+            <nav
+              aria-label="Learn"
+              className="mb-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-2"
+            >
+              <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-neutral-500">
+                Learn
+              </span>
+              {learnLinks.map((l) => (
+                <a
+                  key={l.href}
+                  href={l.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-neutral-400 transition-colors hover:text-brand"
+                >
+                  {l.label}
+                  <span aria-hidden="true" className="ml-1 text-brand">
+                    ↗
+                  </span>
+                </a>
+              ))}
+            </nav>
+          ) : null}
+          <p className="text-center text-xs text-neutral-600">{note}</p>
+
+          {/* Optional "project of X" credit, also from site.local.json. */}
+          {credit ? (
+            <a
+              href={credit.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-8 flex items-center justify-center gap-3 text-sm text-neutral-400 transition-colors hover:text-neutral-200"
+            >
+              {credit.hasLogo ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={`/${credit.logo}`}
+                  alt=""
+                  aria-hidden="true"
+                  className="h-9 w-9 rounded-[7px] ring-1 ring-white/10"
+                />
+              ) : null}
+              {credit.label}
+              <span aria-hidden="true" className="text-brand">
+                ↗
+              </span>
+            </a>
+          ) : null}
+    </footer>
   );
 }
