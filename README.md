@@ -5,12 +5,6 @@ A dashboard that tracks how each BIP 300/301 **drivechain** (sidechain) uses the
 feeds to L1 miners, how much ECX it holds on L1, the deposits and withdrawals moving that
 balance, and which new sidechains are collecting miner votes to activate.
 
-> **eCash / ECX** here means the 2026 Bitcoin hard fork that activates BIP 300/301,
-> forking from Bitcoin's ledger at block 973,728.
-
-This project targets **ECX mainnet and nothing else**. It does not support, and will
-refuse to index, any other chain — see *Chain identity* below.
-
 ## How it works
 
 ```
