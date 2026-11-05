@@ -224,7 +224,7 @@ test("rows are the observed slots plus activated ones, not the whole registry", 
   assert.notEqual(unknown.chain.color, thunder.chain.color);
 });
 
-// ── Merge-mining before activation ───────────────────────────────────────────
+// ── Merge-Mining Before Activation ───────────────────────────────────────────
 // A commitment is just bytes in the coinbase; the enforcer accepts one for any
 // slot. Only commitments to a slot activated at that height count toward the
 // figures. The rest are listed separately.

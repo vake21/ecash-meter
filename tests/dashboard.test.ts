@@ -111,7 +111,7 @@ test("the page labels saved data as saved mainnet data, with height and time", a
 test("merge-mining before activation is shown only when it happens, outside the figures", async () => {
   seedValid();
   let html = await renderHome();
-  assert.doesNotMatch(html, /Merge-mining before activation/, "hidden when empty");
+  assert.doesNotMatch(html, /Merge-Mining Before Activation/, "hidden when empty");
   assert.doesNotMatch(html, /not activated/);
 
   // A commitment to slot 77, which isn't activated.
@@ -123,7 +123,7 @@ test("merge-mining before activation is shown only when it happens, outside the 
     9_999,
   );
   html = await renderHome();
-  assert.match(html, /Merge-mining before activation/);
+  assert.match(html, /Merge-Mining Before Activation/);
   assert.match(html, /slot 77/);
   assert.match(html, /not activated/, "the activity feed tags it");
   const d = await loadDashboard(env());

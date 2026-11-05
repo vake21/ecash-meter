@@ -285,10 +285,12 @@ export default async function Home({
           <h2 className="px-6 pb-1 pt-6 text-base font-semibold tracking-tight text-neutral-100">
             Activated Drivechains
           </h2>
-          <div className="overflow-x-auto px-3 pb-3 pt-2">
+          {/* Scrolls inside the box once there are more chains than fit; the
+              header and total row stay pinned. */}
+          <div className="mx-3 mb-3 mt-2 max-h-[32rem] overflow-auto [scrollbar-color:#404040_transparent] [scrollbar-width:thin]">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-[0.08em] text-neutral-500">
+                <tr className="text-left text-[11px] uppercase tracking-[0.08em] text-neutral-500 [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-neutral-950/60 [&>th]:backdrop-blur-md">
                   <th className="px-3 py-2 text-right font-medium">Slot</th>
                   <th className="px-3 py-2 font-medium">Drivechain</th>
                   <th className="px-3 py-2 text-right font-medium">
@@ -371,7 +373,7 @@ export default async function Home({
               </tbody>
               {showTreasury && totalTreasurySats !== undefined ? (
                 <tfoot>
-                  <tr className="border-t border-white/[0.12] text-neutral-400">
+                  <tr className="border-t border-white/[0.12] text-neutral-400 [&>td]:sticky [&>td]:bottom-0 [&>td]:bg-neutral-950/60 [&>td]:backdrop-blur-md">
                     <td className="px-3 py-3 text-xs font-medium uppercase tracking-[0.08em]" colSpan={5}>
                       Total held by drivechains
                     </td>
@@ -466,7 +468,7 @@ function PendingProposals({
       <div className="px-5 pb-1 pt-6">
         <h2 className="text-base font-semibold tracking-tight text-neutral-100">
           <SidechainName
-            name="Pending activation"
+            name="Pending Activation"
             description="Sidechain proposals collecting miner votes (BIP 300). One for a slot already in use would replace — deactivate — the sidechain there."
           />
         </h2>
@@ -481,7 +483,7 @@ function PendingProposals({
           No sidechain proposals are collecting votes right now.
         </p>
       ) : (
-        <ul className="px-2 pb-2 pt-2">
+        <ul className="mx-2 mb-2 mt-2 max-h-[20rem] overflow-y-auto [scrollbar-color:#404040_transparent] [scrollbar-width:thin]">
           {rows.map((p) => {
             const progress = Math.min(p.votes / p.votesNeeded, 1);
             const left = approxDuration(p.blocksLeft, avgBlockSeconds);

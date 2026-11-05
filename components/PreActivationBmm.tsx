@@ -14,12 +14,12 @@ export default function PreActivationBmm({ rows }: { rows: PreActivationView[] }
       <div className="px-5 pb-1 pt-6">
         <h2 className="text-base font-semibold tracking-tight text-neutral-100">
           <SidechainName
-            name="Merge-mining before activation"
+            name="Merge-Mining Before Activation"
             description="Miners have committed blocks for these slots, but they aren't activated, so the commitments have no effect on L1 yet. They're left out of the figures above."
           />
         </h2>
       </div>
-      <ul className="px-2 pb-2 pt-2">
+      <ul className="mx-2 mb-2 mt-2 max-h-[20rem] overflow-y-auto [scrollbar-color:#404040_transparent] [scrollbar-width:thin]">
         {rows.map((r) => (
           <li
             key={r.slot}

@@ -26,9 +26,9 @@ synthesizing an entry for any slot that table does not name. A hardcoded slate m
 be able to hide real on-chain activity. A BMM commitment counts toward the figures only if
 its slot was activated at that block: the enforcer accepts a commitment for any slot, but
 one for an unactivated slot has no effect on L1. Those are listed separately, under
-**Merge-mining before activation**, rather than dropped.
+**Merge-Mining Before Activation**, rather than dropped.
 Which slots are activated — and which proposals are still collecting votes, listed under
-**Pending activation** — is replayed from the BIP 300 proposal (M1) and ack (M2) messages
+**Pending Activation** — is replayed from the BIP 300 proposal (M1) and ack (M2) messages
 in each coinbase (`lib/proposals.ts`), using the enforcer's own rules and ECX's
 thresholds: a proposal for an empty slot activates with more than 1,815 acks within
 2,016 blocks; one for an occupied slot needs more than 6,048 within 12,096 and would
@@ -69,10 +69,10 @@ but none paid a fee. Fees are an estimate because of how bids are matched — se
   `/api/activity` every 30 seconds (pausing while the tab is hidden), highlighting new
   rows. "Live" means as fresh as the store: a new block appears once the indexer has
   stored it. If `site.local.json` sets `explorer`, blocks and transactions link to it.
-- **Pending activation** — proposals still collecting votes, by slot: votes against the
+- **Pending Activation** — proposals still collecting votes, by slot: votes against the
   number needed, when proposed, and blocks left in the voting window. A proposal for an
   occupied slot is marked as replacing (deactivating) the sidechain there.
-- **Merge-mining before activation** — shown only when it happens: slots with BMM
+- **Merge-Mining Before Activation** — shown only when it happens: slots with BMM
   commitments in the window while they weren't activated (typically a team testing
   before its vote passes), with the block count, heights and any pending vote count.
   These commitments are left out of every other figure; the activity feed tags them
