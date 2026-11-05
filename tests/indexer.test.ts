@@ -39,6 +39,10 @@ class FakeChain {
   private tipHeight: number;
   /** Hash reported at ECX_FORK_HEIGHT; override to impersonate another chain. */
   forkHash = ECX_FORK_BLOCK_HASH;
+  /** Extra coinbase outputs at a height (e.g. M3/M4 messages). */
+  extraCoinbase = new Map<number, RawTx["vout"]>();
+  /** Make verbosity-1 getblock fail, as a pruned node does for old blocks. */
+  pruned = false;
 
   constructor(len: number, tag = "base", startAbove = F) {
     this.segments = [{ from: 0, tag }];
@@ -62,6 +66,7 @@ class FakeChain {
     const coinbase: RawTx = {
       vout: [
         { scriptPubKey: { hex: BMM_PREFIX + "02" + "aa".repeat(32) }, value: 0 },
+        ...(this.extraCoinbase.get(h) ?? []),
       ],
     };
     return {
@@ -103,8 +108,19 @@ class FakeChain {
         return this.tipHeight as T;
       case "getblockhash":
         return this.hashAt(params[0] as number) as T;
-      case "getblock":
-        return this.byHash(params[0] as string) as T;
+      case "getblock": {
+        const b = this.byHash(params[0] as string);
+        if (params[1] === 1) {
+          if (this.pruned) throw new Error("Block not available (pruned data)");
+          return { tx: [`cb:${b.height}`] } as T;
+        }
+        return b as T;
+      }
+      case "getrawtransaction": {
+        const id = params[0] as string;
+        if (!id.startsWith("cb:")) throw new Error(`no tx ${id}`);
+        return this.byHash(params[2] as string).tx[0] as T;
+      }
       default:
         throw new Error(`unexpected rpc ${method}`);
     }
@@ -421,4 +437,66 @@ test("a backfill inside the post-fork range is untouched by the clamp", async ()
   assert.equal(res.status, "ok");
   assert.equal(res.fromHeight, F + 16); // tip-5+1, well above the fork
   assert.equal(dbHeights()[0], F + 16);
+});
+
+// ── Withdrawal bundles ───────────────────────────────────────────────────────
+
+const M3 = (slot: number, m6id: string) => ({
+  scriptPubKey: { hex: "6a25d45aa943" + slot.toString(16).padStart(2, "0") + m6id },
+  value: 0,
+});
+/** Plain objects (node:sqlite rows have a null prototype). */
+const rows = (sql: string) => all(sql).map((r) => ({ ...r }));
+const M4_LEADING = { scriptPubKey: { hex: "6a05d77d177603" }, value: 0 };
+
+test("a fresh index from the fork records bundle messages and marks them complete", async () => {
+  const chain = new FakeChain(5);
+  chain.extraCoinbase.set(F + 2, [M3(9, "ab".repeat(32)), M4_LEADING]);
+  await run(chain.rpc, 1000);
+  assert.equal(getMeta("bundles_from"), String(F));
+  assert.deepEqual(rows("SELECT height, vout, slot, m6id FROM bundle_proposals"), [
+    { height: F + 2, vout: 1, slot: 9, m6id: "ab".repeat(32) },
+  ]);
+  assert.deepEqual(rows("SELECT height, version, votes_hex FROM bundle_acks"), [
+    { height: F + 2, version: 3, votes_hex: "" },
+  ]);
+});
+
+test("a shallow index doesn't claim bundle history it doesn't have", async () => {
+  const chain = new FakeChain(20);
+  await run(chain.rpc, 5);
+  assert.equal(getMeta("bundles_from"), null);
+});
+
+test("a store indexed before bundles were recorded is caught up from the fork", async () => {
+  const chain = new FakeChain(5);
+  chain.extraCoinbase.set(F + 3, [M4_LEADING]);
+  await run(chain.rpc, 1000);
+  // Simulate an older store: no bundle rows, no marker.
+  ensureSchema();
+  get("DELETE FROM bundle_acks");
+  get("DELETE FROM meta WHERE key = 'bundles_from'");
+  assert.equal(getMeta("bundles_from"), null);
+
+  chain.extend(1);
+  const res = await run(chain.rpc, 1000);
+  assert.equal(res.status, "ok");
+  assert.equal(getMeta("bundles_from"), String(F));
+  assert.deepEqual(rows("SELECT height, version FROM bundle_acks"), [{ height: F + 3, version: 3 }]);
+});
+
+test("a pruned node can't catch bundles up: marker stays unset, indexing goes on", async () => {
+  const chain = new FakeChain(5);
+  await run(chain.rpc, 1000);
+  get("DELETE FROM meta WHERE key = 'bundles_from'");
+  chain.pruned = true;
+  chain.extend(2);
+  const logs: string[] = [];
+  const res = await runIndexer({
+    rpc: chain.rpc, mapPool, backfill: 1000, concurrency: 4, log: (m) => logs.push(m),
+  });
+  assert.equal(res.status, "ok");
+  assert.equal(res.blocksInserted, 2);
+  assert.equal(getMeta("bundles_from"), null);
+  assert.ok(logs.some((l) => /pruned/.test(l)));
 });

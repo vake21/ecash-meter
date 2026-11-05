@@ -15,6 +15,8 @@ import type { ActivityEvent } from "@/lib/activity";
 import { formatCoins, formatInt, formatSats } from "@/lib/format";
 
 const POLL_MS = 30_000;
+/** Window event fired with each successful /api/activity response. */
+export const ACTIVITY_EVENT = "ecashmeter:activity";
 const HIGHLIGHT_MS = 8_000;
 
 interface Props {
@@ -69,11 +71,17 @@ export default function ActivityFeed({ initialEvents, limit, explorerUrl }: Prop
   const poll = useCallback(async () => {
     try {
       const res = await fetch(`/api/activity?limit=${limit}`, { cache: "no-store" });
-      const body = (await res.json()) as { status: string; events: ActivityEvent[] };
+      const body = (await res.json()) as {
+        status: string;
+        events: ActivityEvent[];
+        pendingWithdrawals?: unknown;
+      };
       if (!res.ok || body.status !== "ok") {
         setStatus("unavailable");
         return;
       }
+      // Other live boxes (Pending Withdrawals) refresh from the same poll.
+      window.dispatchEvent(new CustomEvent(ACTIVITY_EVENT, { detail: body }));
       const added = body.events.filter((e) => !known.current.has(e.id)).map((e) => e.id);
       body.events.forEach((e) => known.current.add(e.id));
       setEvents(body.events);
@@ -118,7 +126,7 @@ export default function ActivityFeed({ initialEvents, limit, explorerUrl }: Prop
     );
 
   return (
-    <section className="panel mt-10 rounded-2xl" aria-labelledby="activity-heading">
+    <section className="panel rounded-2xl" aria-labelledby="activity-heading">
       <div className="flex flex-wrap items-baseline justify-between gap-2 px-6 pb-1 pt-6">
         <h2
           id="activity-heading"

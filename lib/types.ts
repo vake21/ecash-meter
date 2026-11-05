@@ -163,3 +163,22 @@ export interface PendingProposalView {
    */
   replaces: string | null;
 }
+
+/** A withdrawal bundle collecting miner votes (BIP 300 M3/M4). */
+export interface PendingWithdrawalView {
+  slot: number;
+  name: string;
+  description: string;
+  color: string;
+  /** The bundle's M6id, displayed byte-reversed like a txid. */
+  m6id: string;
+  /** L1 height of the proposal (M3). */
+  proposalHeight: number;
+  votes: number;
+  /** Votes needed to be paid out (threshold + 1). */
+  votesNeeded: number;
+  /** Blocks since the proposal. */
+  age: number;
+  /** Blocks left before it expires. */
+  blocksLeft: number;
+}

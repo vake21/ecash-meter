@@ -129,6 +129,16 @@ test("an unactivated slot that merge-mines isn't on the page, except tagged in t
   assert.ok(!d.data.stats.some((s) => s.chain.slot === 77));
 });
 
+test("Pending Withdrawals sits beside the feed: unknown, then none pending", async () => {
+  seedValid();
+  let html = await renderHome();
+  assert.match(html, /Pending Withdrawals/);
+  assert.match(html, /doesn&#x27;t record withdrawal bundles back to/);
+  setMeta("bundles_from", "973728");
+  html = await renderHome();
+  assert.match(html, /No withdrawal bundles are collecting votes right now/);
+});
+
 // ── Node offline ─────────────────────────────────────────────────────────────
 
 test("saved data is served with the node offline — the site never calls it", async () => {

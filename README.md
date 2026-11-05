@@ -70,11 +70,33 @@ but none paid a fee. Fees are an estimate because of how bids are matched — se
   `/api/activity` every 30 seconds (pausing while the tab is hidden), highlighting new
   rows. "Live" means as fresh as the store: a new block appears once the indexer has
   stored it. If `site.local.json` sets `explorer`, blocks and transactions link to it.
+- **Pending Withdrawals** — beside the feed, at the same height: withdrawal bundles
+  collecting miner votes (BIP 300 M3/M4), with votes against the 6,049 needed to be paid
+  out, when proposed, and blocks left before the bundle expires (12,096 blocks on ECX). It
+  refreshes from the feed's own poll. See "Withdrawal bundles" below.
 - **Pending Activation** — proposals still collecting votes, by slot: votes against the
   number needed, when proposed, and blocks left in the voting window. A proposal for an
   occupied slot is marked as replacing (deactivating) the sidechain there. On wide
   screens it sits beside the table at the same height; either list scrolls inside its
   box once it has more entries than fit.
+
+## Withdrawal bundles
+
+The indexer records every M3 (bundle proposal), M4 (bundle ack) and withdrawal (M6, with
+its M6id) it sees, and `lib/bundles.ts` replays them with the enforcer's rules and ECX's
+thresholds: a bundle starts with one vote, needs more than 6,048 to be paid out, and
+expires once it is more than 12,096 blocks old. M4 votes point at bundles by their
+position in each sidechain's list, and an upvote takes a vote from that sidechain's other
+bundles, so the count at any height depends on everything before it — the replay has to
+start from the ECX fork, where BIP 300 begins.
+
+A store indexed from the fork records this from the start. A store indexed **before**
+bundles were recorded is caught up automatically on the next `npm run index`: it reads
+just the coinbase of each stored block back to the fork (a few minutes), so no rebuild is
+needed and the parser version is unchanged. The meta key `bundles_from` marks a store
+whose bundle history is complete; without it the box shows "Unknown". The catch-up needs
+the node to still have the fork-era blocks — on a pruned node that has dropped them it
+gives up (and says so), and the store has to come from a machine that has them.
 
 ## Chain identity
 

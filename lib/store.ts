@@ -17,7 +17,15 @@ import type {
   DrivechainStats,
   FeePoint,
   PendingProposalView,
+  PendingWithdrawalView,
 } from "./types";
+import {
+  ECX_BUNDLE_THRESHOLDS,
+  replayBundles,
+  type BundleAckRow,
+  type BundleProposalRow,
+  type WithdrawalRow,
+} from "./bundles";
 import {
   ACTIVATED_DRIVECHAINS,
   ECX_FORK_HEIGHT,
@@ -105,6 +113,53 @@ export function loadActivation(
         activationHeight: c.activationHeight!,
       }));
   return { replay, activated };
+}
+
+/**
+ * Withdrawal bundles still collecting votes, newest proposal first — or null
+ * (unknown) when the store doesn't record bundle messages back to the ECX
+ * fork, since the replay can only start from a known state.
+ */
+export function loadPendingWithdrawals(
+  tipHeight: number,
+  activated: { slot: number; activationHeight: number }[],
+  declarations: ReadonlyMap<number, Declaration> = new Map(),
+): PendingWithdrawalView[] | null {
+  const from = Number(getMeta("bundles_from"));
+  if (getMeta("bundles_from") == null || !(from <= ECX_FORK_HEIGHT)) {
+    return null;
+  }
+  const pending = replayBundles(
+    all<BundleProposalRow>("SELECT height, vout, slot, m6id FROM bundle_proposals"),
+    all<BundleAckRow>("SELECT height, vout, version, votes_hex AS votesHex FROM bundle_acks"),
+    all<WithdrawalRow>(
+      "SELECT height, tx_index AS txIndex, slot, m6id FROM withdrawal_m6ids",
+    ),
+    activated,
+    tipHeight,
+  );
+  const chains = new Map(
+    resolveDrivechains(pending.map((b) => b.slot), declarations).map((c) => [c.slot, c]),
+  );
+  return pending
+    .map((b): PendingWithdrawalView => {
+      const age = tipHeight - b.proposalHeight;
+      const chain = chains.get(b.slot)!;
+      return {
+        slot: b.slot,
+        name: chain.name,
+        description: chain.description ?? "",
+        color: chain.color,
+        // Shown the way explorers and the enforcer show txids: byte-reversed.
+        m6id: Buffer.from(b.m6id, "hex").reverse().toString("hex"),
+        proposalHeight: b.proposalHeight,
+        votes: b.votes,
+        votesNeeded: ECX_BUNDLE_THRESHOLDS.inclusionThreshold + 1,
+        age,
+        blocksLeft: Math.max(0, ECX_BUNDLE_THRESHOLDS.maxAge - age),
+      };
+    })
+    .sort((a, b) => b.proposalHeight - a.proposalHeight || a.slot - b.slot);
 }
 
 /**

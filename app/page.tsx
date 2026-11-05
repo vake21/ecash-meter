@@ -6,12 +6,13 @@ import { credit, explorerUrl, learnLinks } from "@/lib/site-links";
 import { getRecentActivity, DEFAULT_ACTIVITY_LIMIT } from "@/lib/activity";
 import ActivityFeed from "@/components/ActivityFeed";
 import SidechainName from "@/components/SidechainName";
+import PendingWithdrawals from "@/components/PendingWithdrawals";
 import { computeFreshness } from "@/lib/freshness";
 import { orderByCustody } from "@/lib/aggregate";
 import type { PendingProposalView } from "@/lib/types";
 import FeeChart, { ChartLegend, type ChartMetric } from "@/components/FeeChart";
 import HeaderMotif from "@/components/HeaderMotif";
-import { feeFormatter, formatCoins, formatInt, formatPct } from "@/lib/format";
+import { approxDuration, feeFormatter, formatCoins, formatInt, formatPct } from "@/lib/format";
 
 // Reads the SQLite store on every request (never the node), so don't prerender
 // this route at build.
@@ -394,13 +395,24 @@ export default async function Home({
         ) : null}
         </div>
 
-        {/* live activity feed — real (saved) data only; the browser keeps it fresh */}
+        {/* live activity feed — real (saved) data only; the browser keeps it
+            fresh — with Pending Withdrawals beside it on wide screens. As with
+            the table row, the feed sets the height and the side box fills it,
+            scrolling its list when it has more than fits. */}
         {!isDemo && activity?.ok ? (
-          <ActivityFeed
-            initialEvents={activity.events}
-            limit={DEFAULT_ACTIVITY_LIMIT}
-            explorerUrl={explorerUrl}
-          />
+          <div className="mt-10 grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+            <ActivityFeed
+              initialEvents={activity.events}
+              limit={DEFAULT_ACTIVITY_LIMIT}
+              explorerUrl={explorerUrl}
+            />
+            <div className="relative lg:min-h-[18rem]">
+              <PendingWithdrawals
+                initial={activity.pendingWithdrawals}
+                avgBlockSeconds={avgBlockSeconds}
+              />
+            </div>
+          </div>
         ) : null}
 
       <SiteFooter
@@ -432,12 +444,6 @@ function TreasuryCell({ sats }: { sats: number | null | undefined }) {
   return <>{formatCoins(sats, 4)}</>;
 }
 
-/** Rough duration of `blocks` L1 blocks, e.g. "≈ 1.4 days" / "≈ 6 h". */
-function approxDuration(blocks: number, avgBlockSeconds?: number): string | null {
-  if (!avgBlockSeconds || blocks <= 0) return null;
-  const hours = (blocks * avgBlockSeconds) / 3600;
-  return hours >= 48 ? `≈ ${(hours / 24).toFixed(1)} days` : `≈ ${Math.round(hours)} h`;
-}
 
 /**
  * Sidechain proposals still collecting miner votes, by slot. A proposal on an

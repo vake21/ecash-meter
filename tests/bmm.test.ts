@@ -128,3 +128,65 @@ test("two valid commitments in one coinbase both parse", () => {
     [2, 255],
   );
 });
+
+// ── Withdrawal bundles (M3 / M4 / M6) ────────────────────────────────────────
+
+test("M3 and M4 are parsed from the coinbase; only the first M4 is kept", async () => {
+  const { parseSidechainMessages } = await import("../lib/bmm");
+  const m6id = "ab".repeat(32);
+  const got = parseSidechainMessages({
+    vout: [
+      { scriptPubKey: { hex: "6a25d45aa9432e" + m6id }, value: 0 },
+      { scriptPubKey: { hex: "6a07d77d177601ff00" }, value: 0 },
+      { scriptPubKey: { hex: "6a05d77d177603" }, value: 0 },
+      { scriptPubKey: { hex: "6a24d45aa9432e" + m6id.slice(2) }, value: 0 }, // too short
+    ],
+  });
+  assert.deepEqual(got.bundleProposals, [{ vout: 0, slot: 46, m6id }]);
+  assert.deepEqual(got.bundleAcks, [{ vout: 1, version: 1, votesHex: "ff00" }]);
+});
+
+// Checked against the node: `decoderawtransaction <blinded hex> false` on an
+// ECX node reports txid 4efefae3…e0a4, the byte-reverse of the M6id below.
+const SAMPLE_WITHDRAWAL = {
+  txid: "11".repeat(32),
+  version: 2,
+  locktime: 983_000,
+  vin: [{ txid: "44".repeat(32), vout: 0, prevout: { value: 1.0, scriptPubKey: { hex: "b7012e51" } } }],
+  vout: [
+    { scriptPubKey: { hex: "b7012e51" }, value: 0.6 }, // new treasury, slot 46
+    { scriptPubKey: { hex: "0014" + "22".repeat(20) }, value: 0.25 },
+    { scriptPubKey: { hex: "76a914" + "33".repeat(20) + "88ac" }, value: 0.1 },
+  ],
+};
+
+test("computeM6id matches the enforcer's blinded-transaction txid", async () => {
+  const { blindedM6Hex, computeM6id } = await import("../lib/bmm");
+  assert.equal(
+    blindedM6Hex(SAMPLE_WITHDRAWAL, 100_000_000),
+    "0200000000030000000000000000" + "0a6a0800000000004c4b40" + // 0 inputs; fee 0.05 BTC
+      "40787d01000000001600142222222222222222222222222222222222222222" +
+      "80969800000000001976a914333333333333333333333333333333333333333388ac" +
+      "d8ff0e00",
+  );
+  assert.equal(
+    computeM6id(SAMPLE_WITHDRAWAL, 100_000_000),
+    "a4e0e37f6ae474d0111390f9e87bad251eeb55f9daaf27922d57d1e0e3fafe4e",
+  );
+  // Payouts larger than the treasury: not a withdrawal.
+  assert.equal(computeM6id(SAMPLE_WITHDRAWAL, 90_000_000), null);
+});
+
+test("a withdrawal is recognised from its prevouts; a deposit is not", async () => {
+  const { withdrawalOf } = await import("../lib/bmm");
+  assert.deepEqual(withdrawalOf(SAMPLE_WITHDRAWAL), {
+    txid: "11".repeat(32),
+    slot: 46,
+    m6id: "a4e0e37f6ae474d0111390f9e87bad251eeb55f9daaf27922d57d1e0e3fafe4e",
+  });
+  const deposit = {
+    ...SAMPLE_WITHDRAWAL,
+    vout: [{ scriptPubKey: { hex: "b7012e51" }, value: 1.5 }],
+  };
+  assert.equal(withdrawalOf(deposit), null);
+});

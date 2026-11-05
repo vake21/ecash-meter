@@ -13,11 +13,15 @@
 
 import {
   parseBlock,
+  parseSidechainMessages,
+  withdrawalOf,
   PARSER_VERSION,
+  type ParsedBlock,
   type RawBlock,
+  type RawTx,
 } from "./bmm";
 import { ECX_FORK_BLOCK_HASH, ECX_FORK_HEIGHT } from "./config";
-import { ensureSchema, get, run, tx, getMeta, setMeta } from "./db";
+import { all, ensureSchema, get, run, tx, getMeta, setMeta } from "./db";
 
 type Rpc = <T = unknown>(method: string, params?: unknown[]) => Promise<T>;
 type MapPool = <T, R>(
@@ -146,6 +150,98 @@ async function fetchAndValidate(
   return blocks;
 }
 
+/** Insert one block's withdrawal-bundle rows (M3, M4, M6). */
+function insertBundleRows(
+  height: number,
+  rows: Pick<ParsedBlock, "bundleProposals" | "bundleAcks" | "withdrawals">,
+) {
+  for (const m3 of rows.bundleProposals) {
+    run(
+      `INSERT INTO bundle_proposals (height, vout, slot, m6id) VALUES (?, ?, ?, ?)
+       ON CONFLICT (height, vout) DO NOTHING`,
+      height, m3.vout, m3.slot, m3.m6id,
+    );
+  }
+  for (const m4 of rows.bundleAcks) {
+    run(
+      `INSERT INTO bundle_acks (height, vout, version, votes_hex) VALUES (?, ?, ?, ?)
+       ON CONFLICT (height) DO NOTHING`,
+      height, m4.vout, m4.version, m4.votesHex,
+    );
+  }
+  for (const w of rows.withdrawals) {
+    run(
+      `INSERT INTO withdrawal_m6ids (height, tx_index, txid, slot, m6id) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (txid) DO NOTHING`,
+      height, w.txIndex, w.txid, w.slot, w.m6id,
+    );
+  }
+}
+
+/**
+ * One-time catch-up for a store indexed before withdrawal bundles were
+ * recorded: reads just the coinbase of every stored block from the ECX fork
+ * (for M3/M4), plus the few stored treasury transactions (for M6). Needs the
+ * node to still have those blocks — a pruned node may not, in which case it
+ * gives up, leaves 'bundles_from' unset (the site then shows pending
+ * withdrawals as unknown), and indexing carries on as normal.
+ */
+async function backfillBundles(
+  rpc: Rpc,
+  mapPool: MapPool,
+  concurrency: number,
+  log: (msg: string) => void,
+): Promise<boolean> {
+  const span = get<{ min: number | null; max: number | null; cnt: number }>(
+    "SELECT MIN(height) AS min, MAX(height) AS max, COUNT(*) AS cnt FROM blocks",
+  )!;
+  if (span.min == null || span.min > ECX_FORK_HEIGHT) return false;
+  if (span.cnt !== span.max! - span.min + 1) {
+    log("[index] stored blocks aren't contiguous; skipping the withdrawal-bundle backfill.");
+    return false;
+  }
+  const blocks = all<{ height: number; hash: string }>(
+    "SELECT height, hash FROM blocks WHERE height >= ? ORDER BY height",
+    ECX_FORK_HEIGHT,
+  );
+  log(`[index] recording withdrawal-bundle messages for ${blocks.length} stored blocks…`);
+  try {
+    const coinbases = await mapPool(blocks, concurrency, async (b) => {
+      const header = await rpc<{ tx: string[] }>("getblock", [b.hash, 1]);
+      return rpc<RawTx>("getrawtransaction", [header.tx[0], true, b.hash]);
+    });
+    const treasuryTxs = all<{ height: number; txIndex: number; txid: string; hash: string }>(
+      `SELECT DISTINCT o.height AS height, o.tx_index AS txIndex, o.txid AS txid, b.hash AS hash
+       FROM treasury_outputs o JOIN blocks b ON b.height = o.height
+       WHERE o.vout = 0`,
+    );
+    const withdrawals = await mapPool(treasuryTxs, concurrency, async (t) => {
+      const raw = await rpc<RawTx>("getrawtransaction", [t.txid, 2, t.hash]);
+      const w = withdrawalOf(raw);
+      return w ? { height: t.height, row: { txIndex: t.txIndex, ...w } } : null;
+    });
+    tx(() => {
+      blocks.forEach((b, i) => {
+        const { bundleProposals, bundleAcks } = parseSidechainMessages(coinbases[i]);
+        insertBundleRows(b.height, { bundleProposals, bundleAcks, withdrawals: [] });
+      });
+      for (const w of withdrawals) {
+        if (w) insertBundleRows(w.height, { bundleProposals: [], bundleAcks: [], withdrawals: [w.row] });
+      }
+      setMeta("bundles_from", String(ECX_FORK_HEIGHT));
+    });
+    log("[index] withdrawal-bundle history recorded back to the ECX fork.");
+    return true;
+  } catch (err) {
+    log(
+      `[index] couldn't record withdrawal-bundle history (${(err as Error).message}). ` +
+        "The node may be pruned past the ECX fork; pending withdrawals will show as " +
+        "unknown until a store with that history is copied in.",
+    );
+    return false;
+  }
+}
+
 export async function runIndexer(deps: IndexerDeps): Promise<IndexerResult> {
   const { rpc, mapPool } = deps;
   const log = deps.log ?? (() => {});
@@ -259,6 +355,11 @@ export async function runIndexer(deps: IndexerDeps): Promise<IndexerResult> {
         `        be verified against the node. Rebuild the derived cache: delete the DB file\n` +
         `        and re-index.`,
     };
+  }
+
+  // ── Withdrawal bundles: catch up a store indexed before they were recorded. ──
+  if (hadDataAtStart && getMeta("bundles_from") == null) {
+    await backfillBundles(rpc, mapPool, concurrency, log);
   }
 
   // ── Reconcile + fetch, retrying if the chain moves under us mid-download. ──
@@ -399,6 +500,7 @@ export async function runIndexer(deps: IndexerDeps): Promise<IndexerResult> {
                 m2.hash,
               );
             }
+            insertBundleRows(parsed.height, parsed);
             for (const sp of parsed.treasurySpends) {
               run(
                 `INSERT INTO treasury_spends (height, tx_index, txid, vout)
@@ -415,6 +517,10 @@ export async function runIndexer(deps: IndexerDeps): Promise<IndexerResult> {
           setMeta("fork_block_hash", ECX_FORK_BLOCK_HASH);
           setMeta("parser_version", String(PARSER_VERSION));
           setMeta("last_indexed_height", String(to));
+          // A fresh index from the fork records bundle history from the start.
+          if (!hasData && from === ECX_FORK_HEIGHT && getMeta("bundles_from") == null) {
+            setMeta("bundles_from", String(ECX_FORK_HEIGHT));
+          }
         });
 
         if (multiChunk) log(`[index] indexed to ${to} of ${nodeTip}…`);

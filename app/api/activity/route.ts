@@ -6,7 +6,8 @@ export const dynamic = "force-dynamic";
 
 /**
  * Recent drivechain activity (BMM blocks, deposits, withdrawals), newest first,
- * for the live feed on the page. DB-only, like the page: it never contacts the
+ * for the live feed on the page, plus the withdrawal bundles still collecting
+ * votes (null when unknown) so the Pending Withdrawals box refreshes with it. DB-only, like the page: it never contacts the
  * node, so it is exactly as fresh as the indexer's last run.
  *
  *   GET /api/activity?limit=25   (1–100)
@@ -25,7 +26,12 @@ export async function GET(request?: Request) {
     return Response.json({ status: r.reason, events: [] }, { status: 503 });
   }
   return Response.json(
-    { status: "ok", tipHeight: r.tipHeight, events: r.events },
+    {
+      status: "ok",
+      tipHeight: r.tipHeight,
+      events: r.events,
+      pendingWithdrawals: r.pendingWithdrawals,
+    },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

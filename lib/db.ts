@@ -106,6 +106,32 @@ export function ensureSchema(d: DatabaseSync = getDb()): void {
       PRIMARY KEY (height, slot)
     );
 
+    -- BIP 300 withdrawal bundles (lib/bundles.ts replays them): M3 proposals,
+    -- M4 acks (raw payload), and M6 withdrawals with their M6id. Recorded for
+    -- every indexed block; meta 'bundles_from' says how far back they reach.
+    CREATE TABLE IF NOT EXISTS bundle_proposals (
+      height INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE,
+      vout   INTEGER NOT NULL,
+      slot   INTEGER NOT NULL CHECK (slot BETWEEN 0 AND 255),
+      m6id   TEXT NOT NULL CHECK (length(m6id) = 64),
+      PRIMARY KEY (height, vout)
+    );
+    CREATE TABLE IF NOT EXISTS bundle_acks (
+      height    INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE,
+      vout      INTEGER NOT NULL,
+      version   INTEGER NOT NULL CHECK (version BETWEEN 0 AND 255),
+      votes_hex TEXT NOT NULL,
+      PRIMARY KEY (height)
+    );
+    CREATE TABLE IF NOT EXISTS withdrawal_m6ids (
+      height   INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE,
+      tx_index INTEGER NOT NULL,
+      txid     TEXT NOT NULL CHECK (length(txid) = 64),
+      slot     INTEGER NOT NULL CHECK (slot BETWEEN 0 AND 255),
+      m6id     TEXT NOT NULL CHECK (length(m6id) = 64),
+      PRIMARY KEY (txid)
+    );
+
     CREATE TABLE IF NOT EXISTS meta (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL

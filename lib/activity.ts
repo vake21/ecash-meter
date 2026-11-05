@@ -15,7 +15,8 @@
 import { all } from "./db";
 import { resolveDrivechains } from "./config";
 import { checkStore, logStoreProblem, type UnavailableReason } from "./store-check";
-import { activationCheck, loadActivation } from "./store";
+import { activationCheck, loadActivation, loadPendingWithdrawals } from "./store";
+import type { PendingWithdrawalView } from "./types";
 import { decodeDeclaration, type Declaration, type ProposalReplay } from "./proposals";
 import {
   replayTreasuryHistory,
@@ -49,7 +50,13 @@ export interface ActivityEvent {
 }
 
 export type ActivityResult =
-  | { ok: true; tipHeight: number; events: ActivityEvent[] }
+  | {
+      ok: true;
+      tipHeight: number;
+      events: ActivityEvent[];
+      /** Refreshed with the feed so the Pending Withdrawals box stays live. */
+      pendingWithdrawals: PendingWithdrawalView[] | null;
+    }
   | { ok: false; reason: UnavailableReason };
 
 export const DEFAULT_ACTIVITY_LIMIT = 25;
@@ -120,10 +127,11 @@ export function getRecentActivity(limit: number = DEFAULT_ACTIVITY_LIMIT): Activ
         ).map((r) => [r.height, r]),
   );
 
+  const declarations = slotDeclarations(replay);
   const chains = new Map(
     resolveDrivechains(
       [...bmm.map((r) => r.slot), ...recentFlows.map((f) => f.slot)],
-      slotDeclarations(replay),
+      declarations,
     ).map((c) => [
       c.slot,
       c,
@@ -168,7 +176,12 @@ export function getRecentActivity(limit: number = DEFAULT_ACTIVITY_LIMIT): Activ
   events.sort(
     (a, b) => b.height - a.height || order[a.kind] - order[b.kind] || a.slot - b.slot,
   );
-  return { ok: true, tipHeight, events: events.slice(0, n) };
+  return {
+    ok: true,
+    tipHeight,
+    events: events.slice(0, n),
+    pendingWithdrawals: loadPendingWithdrawals(tipHeight, activated, declarations),
+  };
 }
 
 /**

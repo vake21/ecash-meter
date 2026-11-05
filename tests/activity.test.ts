@@ -135,6 +135,35 @@ test("an unactivated slot is named from its proposal, else by number", () => {
   assert.equal(name(46), "Flush", "a published name still wins");
 });
 
+test("pending withdrawals: unknown without bundle history, else replayed and named", async () => {
+  seed();
+  let r = getRecentActivity(25);
+  assert.ok(r.ok);
+  if (r.ok) assert.equal(r.pendingWithdrawals, null, "no bundles_from marker → unknown");
+
+  setMeta("bundles_from", "973728");
+  r = getRecentActivity(25);
+  assert.ok(r.ok);
+  if (r.ok) assert.deepEqual(r.pendingWithdrawals, []);
+
+  // Flush (slot 46, activated at 978,331) proposes a bundle at 983,003.
+  run("INSERT INTO bundle_proposals (height, vout, slot, m6id) VALUES (983003, 1, 46, ?)", "ab".repeat(31) + "cd");
+  r = getRecentActivity(25);
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  const [b] = r.pendingWithdrawals!;
+  assert.equal(b.name, "Flush");
+  assert.equal(b.votes, 1);
+  assert.equal(b.votesNeeded, 6_049);
+  assert.equal(b.age, 2);
+  assert.equal(b.blocksLeft, 12_094);
+  assert.ok(b.m6id.startsWith("cdab"), "shown byte-reversed, like a txid");
+
+  const res = await GET(new Request("http://x/api/activity"));
+  const body = (await res.json()) as { pendingWithdrawals: unknown[] };
+  assert.equal(body.pendingWithdrawals.length, 1);
+});
+
 test("the limit caps the merged list, keeping the newest", () => {
   seed();
   const r = getRecentActivity(2);

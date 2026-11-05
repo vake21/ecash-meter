@@ -576,8 +576,14 @@ timer disabled**:
 systemctl disable --now ecashmeter-index.timer
 ```
 
-The site serves the uploaded data, labelled as saved data and marked stale as it
-ages; refresh it by re-uploading.
+The site serves the uploaded data, labelled as saved data with how recently it
+was updated; refresh it by re-uploading.
+
+Upload a store whose withdrawal-bundle history is complete — `meta` has
+`bundles_from` (`sqlite3 <file> "SELECT value FROM meta WHERE key='bundles_from'"`
+prints `973728`). One indexer run on the source machine sets it. The server's
+pruned node may no longer have the fork-era blocks needed to catch it up, so a
+store without it would show Pending Withdrawals as "Unknown".
 
 ⚠ **Do not run the indexer against the server's node until that node has fully
 synced** (`initialblockdownload: false`, `blocks` equal to `headers`). A node

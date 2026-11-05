@@ -73,6 +73,9 @@ export const PARSER_VERSION = 5;
 /** BIP 300 M1 (propose sidechain) and M2 (ack proposal) message tags. */
 const M1_TAG = "d5e0c4af";
 const M2_TAG = "d6e1c5df";
+/** BIP 300 M3 (propose withdrawal bundle) and M4 (ack bundles) tags. */
+const M3_TAG = "d45aa943";
+const M4_TAG = "d77d1776";
 
 /**
  * The single data push of an `OP_RETURN <push>` script, as hex — or null if the
@@ -118,10 +121,35 @@ export interface ParsedAck {
   slot: number;
   hash: string;
 }
+/** A withdrawal-bundle proposal (M3) in a coinbase. */
+export interface ParsedBundleProposal {
+  vout: number;
+  slot: number;
+  /** The bundle's M6id, hex, in the byte order M3 carries it. */
+  m6id: string;
+}
+/** A withdrawal-bundle ack (M4) in a coinbase: raw, interpreted by lib/bundles.ts. */
+export interface ParsedBundleAck {
+  vout: number;
+  /** 0 repeat previous · 1 one byte per slot · 2 two bytes per slot · 3 leading by 50. */
+  version: number;
+  /** Bytes after the version, hex ("" for versions 0 and 3). */
+  votesHex: string;
+}
+/** A withdrawal (M6) paid out of a treasury, identified by its M6id. */
+export interface ParsedWithdrawal {
+  txIndex: number;
+  txid: string;
+  slot: number;
+  m6id: string;
+}
 
 /** getblock verbosity-3 shapes we rely on. */
 export interface RawTx {
   txid?: string;
+  /** Present at every getblock verbosity ≥ 2; needed to compute an M6id. */
+  version?: number;
+  locktime?: number;
   vout: { scriptPubKey: { hex: string }; value: number; n?: number }[];
   /** Per-tx fee in BTC (present for non-coinbase txs at verbosity 3). */
   fee?: number;
@@ -179,6 +207,9 @@ export interface ParsedBlock {
   treasurySpends: TreasurySpend[];
   proposals: ParsedProposal[];
   acks: ParsedAck[];
+  bundleProposals: ParsedBundleProposal[];
+  bundleAcks: ParsedBundleAck[];
+  withdrawals: ParsedWithdrawal[];
 }
 
 /** BTC (float) → whole sats, rounded. Non-finite input yields 0, never NaN. */
@@ -261,7 +292,8 @@ export function parseBlock(b: RawBlock): ParsedBlock {
   }
 
   const { treasuryOutputs, treasurySpends } = parseTreasury(b);
-  const { proposals, acks } = parseSidechainMessages(coinbase);
+  const { proposals, acks, bundleProposals, bundleAcks } = parseSidechainMessages(coinbase);
+  const withdrawals = parseWithdrawals(b);
   return {
     height: b.height,
     hash: b.hash,
@@ -271,6 +303,9 @@ export function parseBlock(b: RawBlock): ParsedBlock {
     treasurySpends,
     proposals,
     acks,
+    bundleProposals,
+    bundleAcks,
+    withdrawals,
   };
 }
 
@@ -283,9 +318,13 @@ export function parseBlock(b: RawBlock): ParsedBlock {
 export function parseSidechainMessages(coinbase: RawTx | undefined): {
   proposals: ParsedProposal[];
   acks: ParsedAck[];
+  bundleProposals: ParsedBundleProposal[];
+  bundleAcks: ParsedBundleAck[];
 } {
   const proposals: ParsedProposal[] = [];
   const acks: ParsedAck[] = [];
+  const bundleProposals: ParsedBundleProposal[] = [];
+  const bundleAcks: ParsedBundleAck[] = [];
   const ackedSlots = new Set<number>();
   (coinbase?.vout ?? []).forEach((o, vout) => {
     const data = opReturnPush(o?.scriptPubKey?.hex ?? "");
@@ -303,9 +342,114 @@ export function parseSidechainMessages(coinbase: RawTx | undefined): {
       if (ackedSlots.has(slot)) return;
       ackedSlots.add(slot);
       acks.push({ slot, hash: data.slice(10) });
+    } else if (data.startsWith(M3_TAG) && data.length === 2 * (4 + 1 + 32)) {
+      bundleProposals.push({
+        vout,
+        slot: parseInt(data.slice(8, 10), 16),
+        m6id: data.slice(10),
+      });
+    } else if (data.startsWith(M4_TAG) && data.length >= 10 && bundleAcks.length === 0) {
+      // At most one M4 per block (the enforcer rejects a second); keep the first.
+      bundleAcks.push({
+        vout,
+        version: parseInt(data.slice(8, 10), 16),
+        votesHex: data.slice(10),
+      });
     }
   });
-  return { proposals, acks };
+  return { proposals, acks, bundleProposals, bundleAcks };
+}
+
+/** Bitcoin CompactSize, hex. */
+function varIntHex(n: number): string {
+  if (n < 0xfd) return n.toString(16).padStart(2, "0");
+  const b = Buffer.alloc(8);
+  b.writeBigUInt64LE(BigInt(n));
+  if (n <= 0xffff) return "fd" + b.subarray(0, 2).toString("hex");
+  if (n <= 0xffffffff) return "fe" + b.subarray(0, 4).toString("hex");
+  return "ff" + b.toString("hex");
+}
+function u32le(n: number): string {
+  const b = Buffer.alloc(4);
+  b.writeUInt32LE(n >>> 0);
+  return b.toString("hex");
+}
+function u64le(n: number | bigint): string {
+  const b = Buffer.alloc(8);
+  b.writeBigUInt64LE(BigInt(n));
+  return b.toString("hex");
+}
+
+/**
+ * The M6id of a withdrawal transaction, exactly as the enforcer computes it
+ * (`OpDrivechain::compute_m6id`): the txid of the tx with its inputs removed
+ * and its first output — the new treasury — replaced by a zero-value
+ * `OP_RETURN <F_total>`, F_total being the fee as an 8-byte big-endian
+ * integer: old treasury − new treasury − sum of payouts. Hex in internal byte
+ * order, as an M3 carries it. Null if the tx isn't shaped like a withdrawal.
+ */
+export function computeM6id(tx: RawTx, oldTreasurySats: number): string | null {
+  const blinded = blindedM6Hex(tx, oldTreasurySats);
+  return blinded == null ? null : sha256dHex(blinded);
+}
+
+/** The serialized "blinded" withdrawal (see computeM6id), hex; null if not a withdrawal. */
+export function blindedM6Hex(tx: RawTx, oldTreasurySats: number): string | null {
+  const outs = tx?.vout;
+  if (!Array.isArray(outs) || outs.length === 0) return null;
+  if (!Number.isInteger(tx.version) || !Number.isInteger(tx.locktime)) return null;
+  if (!TREASURY_SCRIPT_RE.test(outs[0]?.scriptPubKey?.hex ?? "")) return null;
+  const newTreasury = toSats(outs[0].value);
+  const payouts = outs.slice(1).reduce((sum, o) => sum + toSats(o?.value ?? 0), 0);
+  const fee = oldTreasurySats - newTreasury - payouts;
+  if (fee < 0) return null;
+  const feeBe = Buffer.alloc(8);
+  feeBe.writeBigUInt64BE(BigInt(fee));
+  const output = (valueSats: number, scriptHex: string) =>
+    u64le(valueSats) + varIntHex(scriptHex.length / 2) + scriptHex;
+  const serialized =
+    u32le(tx.version!) +
+    varIntHex(0) + // no inputs
+    varIntHex(outs.length) +
+    output(0, "6a08" + feeBe.toString("hex")) +
+    outs
+      .slice(1)
+      .map((o) => output(toSats(o.value), o.scriptPubKey.hex))
+      .join("") +
+    u32le(tx.locktime!);
+  return serialized;
+}
+
+/**
+ * Withdrawals (M6) in a block: transactions whose first output is a treasury
+ * and that spend a larger treasury of the same slot, with their M6id. Like
+ * every treasury event this is raw; lib/bundles.ts decides which one actually
+ * paid out a pending bundle.
+ */
+export function parseWithdrawals(b: RawBlock): ParsedWithdrawal[] {
+  const out: ParsedWithdrawal[] = [];
+  if (!Array.isArray(b?.tx)) return out;
+  b.tx.forEach((tx, txIndex) => {
+    if (txIndex === 0) return;
+    const w = withdrawalOf(tx);
+    if (w) out.push({ txIndex, ...w });
+  });
+  return out;
+}
+
+/** If `tx` (with prevouts) is a withdrawal, its txid, slot and M6id. */
+export function withdrawalOf(tx: RawTx | undefined): Omit<ParsedWithdrawal, "txIndex"> | null {
+  if (!tx || typeof tx.txid !== "string") return null;
+  const first = TREASURY_SCRIPT_RE.exec(tx.vout?.[0]?.scriptPubKey?.hex ?? "");
+  if (!first) return null;
+  const slot = parseInt(first[1], 16);
+  const oldTreasury = (tx.vin ?? []).reduce((sum, i) => {
+    const m = TREASURY_SCRIPT_RE.exec(i?.prevout?.scriptPubKey?.hex ?? "");
+    return m && parseInt(m[1], 16) === slot ? sum + toSats(i!.prevout!.value) : sum;
+  }, 0);
+  if (oldTreasury <= toSats(tx.vout[0].value)) return null; // a deposit, not a withdrawal
+  const m6id = computeM6id(tx, oldTreasury);
+  return m6id ? { txid: tx.txid, slot, m6id } : null;
 }
 
 /**

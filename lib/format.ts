@@ -64,3 +64,10 @@ export function formatPct(fraction: number, decimals = 1): string {
 export function formatInt(n: number): string {
   return n.toLocaleString("en-US");
 }
+
+/** Rough duration of `blocks` L1 blocks, e.g. "≈ 1.4 days" / "≈ 6 h". */
+export function approxDuration(blocks: number, avgBlockSeconds?: number): string | null {
+  if (!avgBlockSeconds || blocks <= 0) return null;
+  const hours = (blocks * avgBlockSeconds) / 3600;
+  return hours >= 48 ? `≈ ${(hours / 24).toFixed(1)} days` : `≈ ${Math.round(hours)} h`;
+}
