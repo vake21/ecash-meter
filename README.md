@@ -59,7 +59,7 @@ but none paid a fee. Fees are an estimate because of how bids are matched — se
   blocks, ECX held (each sidechain's balance at the end of the day), and deposits
   (above the line) and withdrawals (below). Same dates, same colour per sidechain, one
   shared legend.
-- **Drivechains** — a table of every observed or activated slot, **ordered by ECX held**
+- **Activated Drivechains** — a table of every activated (or observed) slot, **ordered by ECX held**
   and re-sorted as balances change, with BMM blocks, estimated fees and share.
 - **Recent activity** — a live feed of the latest BMM blocks (with each bid), deposits
   and withdrawals, newest first. It is rendered with the page and then checks

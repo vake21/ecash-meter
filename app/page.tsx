@@ -276,7 +276,7 @@ export default async function Home({
         {/* drivechain table, ordered by ECX custodied */}
         <section className="panel rounded-2xl">
           <h2 className="px-6 pb-1 pt-6 text-base font-semibold tracking-tight text-neutral-100">
-            Drivechains
+            Activated Drivechains
           </h2>
           <div className="overflow-x-auto px-3 pb-3 pt-2">
             <table className="w-full text-sm">
@@ -327,12 +327,6 @@ export default async function Home({
                               ({r.chain.ticker})
                             </span>
                           </div>
-                          {r.activated && r.bmmCommitments === 0 ? (
-                            <div className="mt-1 text-[11px] text-neutral-500">
-                              Activated · no BMM blocks in the last {windowDays}{" "}
-                              {windowDays === 1 ? "day" : "days"}
-                            </div>
-                          ) : null}
                         </div>
                       </div>
                     </td>
