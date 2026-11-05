@@ -326,9 +326,12 @@ curl -O https://releases.ecash.com/L1-ecash-bitcoin/mainnet/$V/L1-ecash-bitcoin-
 echo "e5be8f86a72bf29b4f423e8a5917281eaf5004d6841e4c45ef511358952568b4  L1-ecash-bitcoin-$V-x86_64-unknown-linux-gnu.zip" | sha256sum -c -
 # must print: OK
 
-unzip -q L1-ecash-bitcoin-$V-x86_64-unknown-linux-gnu.zip
-install -m 0755 L1-ecash-bitcoin-$V-*/bitcoind L1-ecash-bitcoin-$V-*/bitcoin-cli /usr/local/bin/
-bitcoind --version | head -1   # expect: eCash daemon version ecash-v1.2.0-core32.1
+unzip -q L1-ecash-bitcoin-$V-x86_64-unknown-linux-gnu.zip   # or: python3 -m zipfile -e <zip> .
+# Into their own directory, NOT /usr/local/bin: eCash's daemon is also called
+# `bitcoind`, and on a box that already runs one (e.g. a signet node you are
+# migrating from) it would overwrite that binary and break a rollback.
+install -D -m 0755 -t /opt/ecash/bin L1-ecash-bitcoin-$V-*/bitcoind L1-ecash-bitcoin-$V-*/bitcoin-cli
+/opt/ecash/bin/bitcoind --version | head -1   # expect: eCash daemon version ecash-v1.2.0-core32.1
 ```
 
 If that version line says "Bitcoin Core" rather than "eCash", you have the wrong
@@ -368,8 +371,8 @@ cp deploy/systemd/ecash-node.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now ecash-node
 
-alias ec='bitcoin-cli -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash'
-watch -n30 'bitcoin-cli -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash \
+alias ec='/opt/ecash/bin/bitcoin-cli -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash'
+watch -n30 '/opt/ecash/bin/bitcoin-cli -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash \
   getblockchaininfo | grep -E "blocks|headers|verificationprogress|pruned"'
 ```
 
@@ -540,7 +543,7 @@ systemctl list-timers ecashmeter-index.timer
 curl -s https://example.com/api/health | python3 -m json.tool
 
 # is the node still catching up? watch verificationprogress, not blocks
-bitcoin-cli -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash \
+/opt/ecash/bin/bitcoin-cli -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash \
   getblockchaininfo | grep -E "blocks|headers|verificationprogress|pruned|size_on_disk"
 
 # backups: when is the next one, and did the last one work?
@@ -710,12 +713,10 @@ and drop `prune` to `30000` if it is close.
 ## Three things that will bite you
 
 1. **Do not deploy the new code while the old store is still the live one.**
-   This codebase is ECX-only: the page header is hardcoded to `LIVE · ECX
-   MAINNET`. Pointed at a signet store it would present signet data under an ECX
-   label — wrong in the way that matters most for a site whose whole purpose is
-   accurate reporting. `/api/health` would also return 503 `chain-mismatch`,
-   because the store carries no ECX fork-block stamp. **Code and store switch
-   together, last.**
+   This codebase is ECX-only: pointed at a signet store it refuses to show it
+   (no ECX fork-block stamp), so the public page reads "Data temporarily
+   unavailable" and `/api/health` returns 503 `chain-mismatch`. **Code and store
+   switch together, last.**
 2. **The indexer refuses to run below the fork.** Until the ECX node passes
    973,728 it reports "node is at height N, below the ECX fork" and stops. Do not
    mistake that for a failure; it is the identity guard.
@@ -779,6 +780,30 @@ rm /var/lib/ecashmeter/ecash-meter.sqlite*   # archived in step 4
 ```
 
 That reclaims the disk and leaves one node on the box.
+
+## Shortcut: cut over now with a store built elsewhere
+
+If you have an **unpruned, synced ECX node on another machine**, you need not
+wait days with the old site: build the store there (see "Rebuilding after a
+parser change" above, steps 1–2), upload it as `/var/lib/ecashmeter/ecx.sqlite`,
+and do step 4 straight away — but with the **indexer timer disabled**, not
+started:
+
+```bash
+systemctl disable --now ecashmeter-index.timer
+```
+
+The site then serves the uploaded ECX data, labelled as saved data and marked
+stale as it ages. Refresh it by re-uploading until the server's own node has
+synced.
+
+⚠ **Do not run the indexer against the server's node until that node has fully
+synced** (`initialblockdownload: false` and `blocks` at the network tip). A node
+that has passed the fork but is still BEHIND the uploaded store's tip looks to
+the indexer exactly like a chain reorganisation, and it would delete every
+stored block above the node's height. Once the node is synced, point
+`indexer.env` at it and `systemctl enable --now ecashmeter-index.timer`; the
+indexer reconciles against the uploaded tip and carries on.
 
 ## Rolling back
 

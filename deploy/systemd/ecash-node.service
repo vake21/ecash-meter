@@ -9,7 +9,9 @@ Wants=network-online.target
 Type=simple
 User=ecash
 Group=ecash
-ExecStart=/usr/local/bin/bitcoind -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash
+# eCash's own bitcoind, installed in its own directory (deploy/README.md step 3)
+# so it can never be confused with — or overwrite — a Bitcoin Core bitcoind.
+ExecStart=/opt/ecash/bin/bitcoind -conf=/etc/ecash/ecash.conf -datadir=/var/lib/ecash
 Restart=on-failure
 RestartSec=10
 # The node flushes its chainstate on shutdown; killing it early can corrupt the
