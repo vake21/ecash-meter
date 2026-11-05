@@ -468,10 +468,7 @@ function PendingProposals({
     <section className="panel flex flex-col rounded-2xl lg:absolute lg:inset-0">
       <div className="px-5 pb-1 pt-6">
         <h2 className="text-base font-semibold tracking-tight text-neutral-100">
-          <SidechainName
-            name="Pending Activation"
-            description="Sidechain proposals collecting miner votes (BIP 300). One for a slot already in use would replace — deactivate — the sidechain there."
-          />
+          Pending Activation
         </h2>
       </div>
       {proposals === null ? (

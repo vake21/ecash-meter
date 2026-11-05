@@ -36,10 +36,7 @@ export default function PendingWithdrawals({ initial, avgBlockSeconds }: Props) 
     <section className="panel flex flex-col rounded-2xl lg:absolute lg:inset-0">
       <div className="px-5 pb-1 pt-6">
         <h2 className="text-base font-semibold tracking-tight text-neutral-100">
-          <SidechainName
-            name="Pending Withdrawals"
-            description="Withdrawal bundles collecting miner votes (BIP 300). A bundle is paid out of its sidechain's treasury once it has more than 6,048 votes, and expires if it doesn't get them within 12,096 blocks of being proposed."
-          />
+          Pending Withdrawals
         </h2>
       </div>
       {bundles === null ? (

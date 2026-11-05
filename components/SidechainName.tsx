@@ -1,6 +1,6 @@
 "use client";
 
-// A name (a sidechain, or a section heading) that reveals its description on demand:
+// A sidechain's name that reveals its description on demand:
 //   - mouse: hover the name
 //   - touch: tap the name (tap anywhere else, or tap it again, to close)
 //   - keyboard: tab to it (Escape closes)
