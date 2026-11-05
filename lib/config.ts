@@ -13,8 +13,24 @@ import type { Drivechain } from "./types";
 export const L1_SYMBOL = "ECX";
 export const SATS_PER_COIN = 100_000_000;
 
-/** How many days of history the dashboard shows. */
-export const WINDOW_DAYS = 30;
+/**
+ * The reporting windows the dashboard offers (days), and the default. The page
+ * takes the choice from `?window=7|30`; anything else falls back to the default.
+ */
+export const WINDOW_OPTIONS = [7, 30] as const;
+export type WindowDays = (typeof WINDOW_OPTIONS)[number];
+export const DEFAULT_WINDOW_DAYS: WindowDays = 30;
+/** The longest window offered. */
+export const WINDOW_DAYS: WindowDays = 30;
+
+/** Parse a `?window=` value into an offered window, else the default. */
+export function parseWindowDays(value: unknown): WindowDays {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const n = Number(raw);
+  return (WINDOW_OPTIONS as readonly number[]).includes(n)
+    ? (n as WindowDays)
+    : DEFAULT_WINDOW_DAYS;
+}
 
 /** Height of the fork from Bitcoin. Block 973,728 is the first ECX block. */
 export const ECX_FORK_HEIGHT = 973_728;

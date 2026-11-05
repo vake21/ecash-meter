@@ -17,6 +17,7 @@
 // invented numbers off as real ones.)
 
 import type { DashboardData } from "./types";
+import { DEFAULT_WINDOW_DAYS } from "./config";
 import { getDemoDashboardData } from "./mock-data";
 import { getStoredDashboardData, EmptyStoreError } from "./store";
 import {
@@ -70,15 +71,16 @@ function unavailable(check: Extract<StoreCheck, { ok: false }>): Dashboard {
 
 export async function loadDashboard(
   env: NodeJS.ProcessEnv = process.env,
+  windowDays: number = DEFAULT_WINDOW_DAYS,
 ): Promise<Dashboard> {
   warnLegacySettings(env);
-  if (isDemoMode(env)) return { kind: "demo", data: getDemoDashboardData() };
+  if (isDemoMode(env)) return { kind: "demo", data: getDemoDashboardData(windowDays) };
 
   const check = checkStore();
   if (!check.ok) return unavailable(check);
 
   try {
-    const data = await getStoredDashboardData();
+    const data = await getStoredDashboardData(windowDays);
     return { kind: "saved", data, summary: check.summary };
   } catch (err) {
     // The checks passed but reading the figures failed — still never demo data.

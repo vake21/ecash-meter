@@ -8,7 +8,7 @@
 // The reporting window is a run of CONTIGUOUS UTC calendar days ending at the
 // latest indexed block's date — NOT "the N most recent days that happened to have
 // activity". Zero-activity days appear as zeros, and the window can never reach
-// further than WINDOW_DAYS calendar days into the past. "Fees last 24h" is a real
+// further than the chosen window (7 or 30 calendar days) into the past. "Fees last 24h" is a real
 // rolling boundary (blocks newer than latest-block-time − 24h), and lastBlockTime
 // is exposed so the UI can show freshness rather than presenting stale data as new.
 
@@ -23,7 +23,7 @@ import {
   ECX_FORK_HEIGHT,
   KNOWN_DRIVECHAINS,
   resolveDrivechains,
-  WINDOW_DAYS,
+  DEFAULT_WINDOW_DAYS,
 } from "./config";
 import {
   replayProposals,
@@ -98,7 +98,14 @@ function recentBlockSeconds(
   return s > 0 ? s : undefined;
 }
 
-export async function getStoredDashboardData(): Promise<DashboardData> {
+/**
+ * `windowDays` is the reporting window the visitor chose (7 or 30). It sets the
+ * dates the series, totals and shares cover. Current balances, pending
+ * proposals and the rolling 24h figure don't depend on it.
+ */
+export async function getStoredDashboardData(
+  windowDays: number = DEFAULT_WINDOW_DAYS,
+): Promise<DashboardData> {
   const tipRow = get<{
     tip: number | null;
     minHeight: number | null;
@@ -120,11 +127,11 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
   const lastBlockTime = tipRow.lastTime;
   const refDate = utcDate(lastBlockTime);
   const firstDate = utcDate(tipRow.firstTime!);
-  // Contiguous calendar window: at most WINDOW_DAYS, and never longer than the
+  // Contiguous calendar window: at most the chosen window, and never longer than the
   // span actually covered (so a 3-day-old store doesn't render 27 empty days).
   const spanDays = daysBetween(firstDate, refDate) + 1;
-  const windowDays = Math.max(1, Math.min(WINDOW_DAYS, spanDays));
-  const dates = lastNDatesEnding(refDate, windowDays);
+  const shownDays = Math.max(1, Math.min(windowDays, spanDays));
+  const dates = lastNDatesEnding(refDate, shownDays);
   const windowStart = dates[0];
 
   // Per slot/day aggregates within the window.
@@ -289,7 +296,9 @@ export async function getStoredDashboardData(): Promise<DashboardData> {
     network,
     metric,
     tipHeight,
-    windowDays,
+    // Days actually covered: shorter than the chosen window while the store's
+    // history is younger than it.
+    windowDays: shownDays,
     blocksScanned,
     stats,
     grandTotalFeesSats,

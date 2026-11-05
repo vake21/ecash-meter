@@ -48,6 +48,11 @@ but none paid a fee. Fees are an estimate because of how bids are matched — se
 
 ## What the dashboard shows
 
+- **Time window** — a 7-day / 30-day selector (default 30) above the cards. Every
+  window-dependent figure follows it: the cards, the charts and the table's BMM, fee and
+  share columns. It's a plain `?window=7` / `?window=30` link, so a view can be
+  bookmarked. While the stored history is shorter than the chosen window, the page says
+  how many days it has. Current balances and pending proposals don't depend on it.
 - **Summary cards** — estimated fees over the window and the last 24h, how many
   drivechains are merge-mining out of how many are activated, and the top contributor.
 - **Four daily charts in one horizontally scrolling row** — estimated fees to L1, BMM

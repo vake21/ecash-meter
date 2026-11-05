@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { loadDashboard } from "@/lib/dashboard";
+import { parseWindowDays, WINDOW_OPTIONS, type WindowDays } from "@/lib/config";
 import { hasLogo, hasWallpaper, LOGO_FILE, WALLPAPER_FILE } from "@/lib/branding";
 import { credit, learnLinks } from "@/lib/site-links";
 import { computeFreshness } from "@/lib/freshness";
@@ -13,8 +15,15 @@ import { feeFormatter, formatCoins, formatInt, formatPct } from "@/lib/format";
 export const dynamic = "force-dynamic";
 
 
-export default async function Home() {
-  const dashboard = await loadDashboard();
+export default async function Home({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+} = {}) {
+  // Reporting window from ?window=7|30 (anything else → the default). Every
+  // window-dependent figure follows it: cards, charts and the table's columns.
+  const selectedWindow = parseWindowDays((await searchParams)?.window);
+  const dashboard = await loadDashboard(process.env, selectedWindow);
 
   // No figures at all when the store can't be trusted: no totals, charts,
   // rankings or activity — and never demo data in their place. The reason goes
@@ -149,6 +158,8 @@ export default async function Home() {
             {note}
           </div>
         ) : null}
+
+        <WindowSelector selected={selectedWindow} shownDays={windowDays} />
 
         {/* summary cards */}
         <section className="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -563,6 +574,54 @@ function StatCard({
         {value}
       </div>
       {sub ? <div className="mt-1.5 text-xs text-neutral-500">{sub}</div> : null}
+    </div>
+  );
+}
+
+/**
+ * Choose the reporting window. Plain links to ?window=N, so the server renders
+ * the chosen window (no client JS needed) and a view can be bookmarked; Next's
+ * <Link> swaps the page in place without losing the scroll position. When the
+ * stored history is shorter than the chosen window, says so instead of
+ * implying a full window.
+ */
+function WindowSelector({
+  selected,
+  shownDays,
+}: {
+  selected: WindowDays;
+  shownDays: number;
+}) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-end gap-3 text-xs">
+      {shownDays < selected ? (
+        <span className="text-neutral-500">
+          Only {shownDays} {shownDays === 1 ? "day" : "days"} of history so far
+        </span>
+      ) : null}
+      <nav
+        aria-label="Time window"
+        className="inline-flex rounded-full bg-white/[0.06] p-1 ring-1 ring-white/10"
+      >
+        {WINDOW_OPTIONS.map((days) => {
+          const active = days === selected;
+          return (
+            <Link
+              key={days}
+              href={`?window=${days}`}
+              scroll={false}
+              aria-current={active ? "true" : undefined}
+              className={`rounded-full px-3 py-1 font-medium transition-colors ${
+                active
+                  ? "bg-brand/20 text-brand ring-1 ring-brand/40"
+                  : "text-neutral-400 hover:text-neutral-100"
+              }`}
+            >
+              {days} days
+            </Link>
+          );
+        })}
+      </nav>
     </div>
   );
 }

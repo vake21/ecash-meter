@@ -1,4 +1,4 @@
-import { KNOWN_DRIVECHAINS, WINDOW_DAYS } from "./config";
+import { DEFAULT_WINDOW_DAYS, KNOWN_DRIVECHAINS, WINDOW_DAYS } from "./config";
 import { finalizeStats } from "./aggregate";
 import type {
   DashboardData,
@@ -68,9 +68,11 @@ function buildSeries(slot: number): FeePoint[] {
   return points;
 }
 
-function buildStats(): DrivechainStats[] {
+function buildStats(windowDays: number): DrivechainStats[] {
   const raw = KNOWN_DRIVECHAINS.map((chain) => {
-    const series = buildSeries(chain.slot);
+    // Always generate the longest window and take its tail, so the 7-day view
+    // is exactly the last 7 days of the 30-day one.
+    const series = buildSeries(chain.slot).slice(-windowDays);
     const totalFeesSats = series.reduce((s, p) => s + p.feeSats, 0);
     const feesLast24hSats = series[series.length - 1].feeSats;
     const bmmCommitments = series.reduce((s, p) => s + p.bmmCount, 0);
@@ -91,8 +93,11 @@ function buildStats(): DrivechainStats[] {
   return raw;
 }
 
-export function getDemoDashboardData(): DashboardData {
-  const stats = buildStats();
+export function getDemoDashboardData(
+  windowDays: number = DEFAULT_WINDOW_DAYS,
+): DashboardData {
+  const days = Math.max(1, Math.min(windowDays, WINDOW_DAYS));
+  const stats = buildStats(days);
   // Same metric-selection / share / ranking policy as the stored path.
   const { metric, grandTotalFeesSats, grandTotalBmmCommitments } =
     finalizeStats(stats);
@@ -100,8 +105,8 @@ export function getDemoDashboardData(): DashboardData {
     network: "demo",
     metric,
     tipHeight: 892_143,
-    windowDays: WINDOW_DAYS,
-    blocksScanned: WINDOW_DAYS * 144,
+    windowDays: days,
+    blocksScanned: days * 144,
     stats,
     grandTotalFeesSats,
     grandTotalBmmCommitments,
