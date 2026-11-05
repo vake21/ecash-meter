@@ -145,11 +145,6 @@ export default async function Home() {
                 </span>
               )}
             </h1>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-neutral-400">
-              {isBmm
-                ? "Blind-merged-mining activity each BIP 301 drivechain commits to L1."
-                : "Fees each BIP 301 drivechain feeds to L1 miners via blind-merged-mining bids."}
-            </p>
           </div>
           <div className="flex items-center gap-2 text-xs">
             <span
