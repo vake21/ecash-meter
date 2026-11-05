@@ -262,6 +262,16 @@ export default async function Home({
           </div>
         </section>
 
+        {/* Drivechains table with Pending activation beside it on wide screens
+            (stacked below lg). The table takes the flexible width; the
+            proposals get a fixed narrow column. */}
+        <div
+          className={
+            pendingProposals !== undefined
+              ? "grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]"
+              : ""
+          }
+        >
         {/* drivechain table, ordered by ECX custodied */}
         <section className="panel rounded-2xl">
           <h2 className="px-6 pb-1 pt-6 text-base font-semibold tracking-tight text-neutral-100">
@@ -372,20 +382,21 @@ export default async function Home({
           </div>
         </section>
 
+        {/* pending proposals — only where the data source tracks them */}
+        {pendingProposals !== undefined ? (
+          <PendingProposals
+            proposals={pendingProposals}
+            avgBlockSeconds={avgBlockSeconds}
+          />
+        ) : null}
+        </div>
+
         {/* live activity feed — real (saved) data only; the browser keeps it fresh */}
         {!isDemo && activity?.ok ? (
           <ActivityFeed
             initialEvents={activity.events}
             limit={DEFAULT_ACTIVITY_LIMIT}
             explorerUrl={explorerUrl}
-          />
-        ) : null}
-
-        {/* pending proposals — only where the data source tracks them */}
-        {pendingProposals !== undefined ? (
-          <PendingProposals
-            proposals={pendingProposals}
-            avgBlockSeconds={avgBlockSeconds}
           />
         ) : null}
 
@@ -440,111 +451,89 @@ function PendingProposals({
   const rows = [...(proposals ?? [])].sort(
     (a, b) => a.slot - b.slot || a.proposalHeight - b.proposalHeight,
   );
+  // A compact list rather than a table: it sits in a narrow column beside the
+  // Drivechains table, where five table columns wouldn't fit.
   return (
-    <section className="panel mt-10 rounded-2xl">
-      <div className="px-6 pb-1 pt-6">
+    <section className="panel rounded-2xl">
+      <div className="px-5 pb-1 pt-6">
         <h2 className="text-base font-semibold tracking-tight text-neutral-100">
           Pending activation
         </h2>
-        <p className="mt-1 text-xs text-neutral-500">
-          Sidechain proposals collecting miner votes (BIP 300). A proposal for a
-          slot that is already in use would replace — deactivate — the
-          sidechain there.
+        <p className="mt-1 text-xs leading-relaxed text-neutral-500">
+          Sidechain proposals collecting miner votes (BIP 300). One for a slot
+          already in use would replace — deactivate — the sidechain there.
         </p>
       </div>
       {proposals === null ? (
-        <p className="px-6 pb-6 pt-3 text-sm text-neutral-400">
+        <p className="px-5 pb-6 pt-3 text-sm text-neutral-400">
           Unknown — the indexed history doesn&apos;t reach back to the ECX fork,
           so proposal votes can&apos;t be counted.
         </p>
       ) : rows.length === 0 ? (
-        <p className="px-6 pb-6 pt-3 text-sm text-neutral-400">
+        <p className="px-5 pb-6 pt-3 text-sm text-neutral-400">
           No sidechain proposals are collecting votes right now.
         </p>
       ) : (
-        <div className="overflow-x-auto px-3 pb-3 pt-2">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-[11px] uppercase tracking-[0.08em] text-neutral-500">
-                <th className="px-3 py-2 text-right font-medium">Slot</th>
-                <th className="px-3 py-2 font-medium">Proposed sidechain</th>
-                <th className="px-3 py-2 text-right font-medium">Votes</th>
-                <th className="px-3 py-2 text-right font-medium">Proposed</th>
-                <th className="px-3 py-2 text-right font-medium">
-                  Voting window
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((p) => {
-                const progress = Math.min(p.votes / p.votesNeeded, 1);
-                const left = approxDuration(p.blocksLeft, avgBlockSeconds);
-                return (
-                  <tr
-                    key={`${p.slot}-${p.proposalHeight}`}
-                    className="border-t border-white/[0.06] transition-colors hover:bg-white/[0.035]"
-                  >
-                    <td className="px-3 py-3 text-right tabular-nums text-neutral-400">
-                      {p.slot}
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium text-neutral-100">
-                          {p.name}
-                        </span>
-                        {p.replaces ? (
-                          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-300 ring-1 ring-amber-500/30">
-                            Replaces {p.replaces}
-                          </span>
-                        ) : (
-                          <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] font-medium text-neutral-400 ring-1 ring-white/10">
-                            New slot
-                          </span>
-                        )}
-                      </div>
-                      {p.description ? (
-                        <div className="mt-0.5 text-xs text-neutral-500">
-                          {p.description}
-                        </div>
-                      ) : null}
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      <div className="tabular-nums text-neutral-100">
-                        {formatInt(p.votes)}
-                        <span className="text-neutral-500">
-                          {" "}
-                          / {formatInt(p.votesNeeded)}
-                        </span>
-                      </div>
-                      <div
-                        className="ml-auto mt-1.5 h-1.5 w-24 overflow-hidden rounded-full bg-neutral-800"
-                        role="img"
-                        aria-label={`${formatPct(progress, 0)} of the votes needed`}
-                      >
-                        <span
-                          className="block h-full rounded-full bg-brand"
-                          style={{ width: `${Math.max(progress * 100, 2)}%` }}
-                        />
-                      </div>
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-neutral-300">
-                      #{formatInt(p.proposalHeight)}
-                      <div className="text-xs text-neutral-500">
-                        {formatInt(p.age)} blocks ago
-                      </div>
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-neutral-300">
-                      {formatInt(p.blocksLeft)} blocks left
-                      {left ? (
-                        <div className="text-xs text-neutral-500">{left}</div>
-                      ) : null}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <ul className="px-2 pb-2 pt-2">
+          {rows.map((p) => {
+            const progress = Math.min(p.votes / p.votesNeeded, 1);
+            const left = approxDuration(p.blocksLeft, avgBlockSeconds);
+            return (
+              <li
+                key={`${p.slot}-${p.proposalHeight}`}
+                className="rounded-xl border-t border-white/[0.06] px-3 py-3.5 first:border-t-0"
+              >
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="text-xs tabular-nums text-neutral-500">
+                    slot {p.slot}
+                  </span>
+                  <span className="font-medium text-neutral-100">{p.name}</span>
+                  {p.replaces ? (
+                    <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-300 ring-1 ring-amber-500/30">
+                      Replaces {p.replaces}
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] font-medium text-neutral-400 ring-1 ring-white/10">
+                      New slot
+                    </span>
+                  )}
+                </div>
+                {p.description ? (
+                  <p className="mt-1 text-xs leading-relaxed text-neutral-500">
+                    {p.description}
+                  </p>
+                ) : null}
+
+                <div className="mt-2.5 flex items-baseline justify-between text-xs">
+                  <span className="text-neutral-500">Votes</span>
+                  <span className="tabular-nums text-neutral-100">
+                    {formatInt(p.votes)}
+                    <span className="text-neutral-500"> / {formatInt(p.votesNeeded)}</span>
+                  </span>
+                </div>
+                <div
+                  className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-neutral-800"
+                  role="img"
+                  aria-label={`${formatPct(progress, 0)} of the votes needed`}
+                >
+                  <span
+                    className="block h-full rounded-full bg-brand"
+                    style={{ width: `${Math.max(progress * 100, 2)}%` }}
+                  />
+                </div>
+
+                <div className="mt-2 flex flex-wrap justify-between gap-x-3 gap-y-0.5 text-xs tabular-nums text-neutral-500">
+                  <span>
+                    proposed #{formatInt(p.proposalHeight)} · {formatInt(p.age)} blocks ago
+                  </span>
+                  <span>
+                    {formatInt(p.blocksLeft)} blocks left{left ? ` (${left})` : ""}
+                  </span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </section>
   );
