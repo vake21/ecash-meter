@@ -209,7 +209,7 @@ test("a store from another parser version is unavailable", async () => {
 
 test("a store not stamped as ECX is unavailable", async () => {
   seedValid();
-  setMeta("network", "signet");
+  setMeta("network", "not-ecx");
   await assertUnavailable("network-mismatch");
 });
 
