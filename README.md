@@ -94,7 +94,8 @@ ECX node ──RPC──▶ indexer (timer) ──writes──▶ SQLite ◀─�
 - **The website reads only the SQLite store.** It has no node connection and no RPC
   credentials, so it keeps serving the saved data while the node or indexer is down. The
   header labels it **SAVED · ECX MAINNET DATA** with the latest indexed block's height and
-  time, and warns when no new block has been indexed for 30 minutes.
+  time and how recently it was updated (e.g. "updated 12m ago"). The page itself never
+  calls the data stale; `/api/health` reports that, for monitoring.
 - **Before serving anything, it validates the store:** the ECX fork-block stamp, the
   `network` stamp and the parser version must all match this code — the same identity the
   indexer verifies against the node and stamps in.

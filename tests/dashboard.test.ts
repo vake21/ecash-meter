@@ -120,17 +120,17 @@ test("saved data is served with the node offline — the site never calls it", a
   assert.equal(fetchCalls, 0, "no network request from the page or health");
 });
 
-test("old saved data is still shown, with a freshness warning", async () => {
+test("old saved data is still shown, saying only how recently it was updated", async () => {
   seedValid(3 * 86_400); // three days without a new block
   const html = await renderHome();
   assert.match(html, /SAVED · ECX MAINNET DATA/);
-  assert.match(html, /stale · 3d ago/);
-  assert.match(html, /may be\s+out of date/);
+  assert.match(html, /updated 3d ago/);
+  assert.doesNotMatch(html, /stale|out of date/i, "the page never calls data stale");
   assert.match(html, /<svg[^>]*role="img"/, "figures are still shown");
 
   const res = await health();
   const body = (await res.json()) as Record<string, unknown>;
-  assert.equal(res.status, 503, "monitoring still alerts on a stalled indexer");
+  assert.equal(res.status, 503, "monitoring (not the page) still flags a stalled indexer");
   assert.equal(body.status, "stale");
   assert.equal(body.dashboard, "saved", "…while the page keeps serving saved data");
 });

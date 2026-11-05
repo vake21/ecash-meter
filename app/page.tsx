@@ -103,12 +103,11 @@ export default async function Home() {
     Math.max(0, ...stats.map((r) => r.totalFeesSats)),
   );
 
-  // Data freshness (computed in the data layer, not during render): flag stale so
-  // an old indexer's data is never silently presented as current.
-  // Demo data has no real block time, so no freshness either.
-  const { isStale, label: freshness } = isDemo
-    ? { isStale: false, label: null }
-    : computeFreshness(lastBlockTime);
+  // How recently the data was updated (the latest indexed block's age), shown
+  // as a neutral "updated 12m ago". The page deliberately doesn't call data
+  // stale or out of date; /api/health is where staleness is reported, for
+  // monitoring. Demo data has no real block time, so no age either.
+  const freshness = isDemo ? null : computeFreshness(lastBlockTime).label;
   // The saved data's latest block, as a fixed UTC stamp ("2026-11-04 20:01 UTC").
   const blockStamp =
     !isDemo && lastBlockTime != null
@@ -125,15 +124,8 @@ export default async function Home() {
         {blockStamp ? ` · ${blockStamp}` : ""}
       </span>
       {freshness ? (
-        <span
-          className={`rounded-full px-3 py-1.5 font-medium ring-1 ${
-            isStale
-              ? "bg-amber-500/15 text-amber-300 ring-amber-500/30"
-              : "bg-white/[0.06] text-neutral-400 ring-white/10"
-          }`}
-        >
-          {isStale ? "stale · " : "latest block "}
-          {freshness}
+        <span className="rounded-full bg-white/[0.06] px-3 py-1.5 text-neutral-400 ring-1 ring-white/10">
+          updated {freshness}
         </span>
       ) : null}
     </>
@@ -149,16 +141,6 @@ export default async function Home() {
           <strong className="font-semibold">DEMO — SAMPLE DATA.</strong> Every
           figure on this page is invented for demonstration. None of it comes
           from the eCash chain.
-        </div>
-      ) : isStale ? (
-        <div
-          role="note"
-          className="mb-6 rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-200/90"
-        >
-          Showing saved mainnet data up to block #{formatInt(tipHeight)}
-          {blockStamp ? `, mined ${blockStamp}` : ""}. No newer block has been
-          indexed for {freshness?.replace(/ ago$/, "")}, so these figures may be
-          out of date.
         </div>
       ) : null}
 
