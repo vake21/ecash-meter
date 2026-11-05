@@ -224,12 +224,12 @@ test("rows are the observed slots plus activated ones, not the whole registry", 
   assert.notEqual(unknown.chain.color, thunder.chain.color);
 });
 
-// ── Merge-Mining Before Activation ───────────────────────────────────────────
+// ── Unactivated slots ────────────────────────────────────────────────────────
 // A commitment is just bytes in the coinbase; the enforcer accepts one for any
-// slot. Only commitments to a slot activated at that height count toward the
-// figures. The rest are listed separately.
+// slot. Only commitments to a slot activated at that height count, and a slot
+// that isn't activated is never listed, even while it's being merge-mined.
 
-test("commitments to unactivated slots are left out of every figure and listed separately", async () => {
+test("commitments to unactivated slots are left out of every figure and the table", async () => {
   activate(9);
   seedCommitment(LIVE + 1, 9, 100); // Thunder, activated: counts
   seedCommitment(LIVE + 2, UNREGISTERED_SLOT, 5_000); // never activated
@@ -242,17 +242,6 @@ test("commitments to unactivated slots are left out of every figure and listed s
   assert.equal(data.grandTotalBmmCommitments, 1);
   assert.equal(data.stats[0].shareOfTotal, 1);
   assert.equal(data.stats[0].feesLast24hSats, 100);
-
-  assert.deepEqual(
-    data.preActivationBmm?.map((p) => [p.slot, p.bmmBlocks, p.firstHeight, p.lastHeight]),
-    [
-      [24, 1, LIVE + 4, LIVE + 4],
-      [UNREGISTERED_SLOT, 2, LIVE + 2, LIVE + 3],
-    ],
-  );
-  assert.equal(data.preActivationBmm?.[0].name, "Elements+");
-  assert.equal(data.preActivationBmm?.[1].name, `Slot ${UNREGISTERED_SLOT}`);
-  assert.equal(data.preActivationBmm?.[1].votes, undefined);
 });
 
 test("a sidechain's commitments from before its activation don't count", async () => {
@@ -263,28 +252,15 @@ test("a sidechain's commitments from before its activation don't count", async (
   const thunder = data.stats.find((s) => s.chain.slot === 9)!;
   assert.equal(thunder.bmmCommitments, 1);
   assert.equal(thunder.totalFeesSats, 30);
-  assert.deepEqual(
-    data.preActivationBmm?.map((p) => [p.slot, p.bmmBlocks, p.lastHeight]),
-    [[9, 1, 2_000]],
-  );
 });
 
-test("a slot merge-mining while its proposal collects votes shows the vote count", async () => {
+test("a slot merge-mining while its proposal collects votes isn't listed as activated", async () => {
   propose(120, "Shuttle", LIVE - 500, 398); // pending, still inside its window
   seedCommitment(LIVE + 1, 120, 0);
   const data = await getStoredDashboardData();
   assert.equal(data.stats.length, 0);
-  const [p] = data.preActivationBmm!;
-  assert.equal(p.name, "Shuttle");
-  assert.equal(p.description, "Shuttle description");
-  assert.equal(p.votes, 398);
-  assert.equal(p.votesNeeded, ACTIVATE);
-});
-
-test("with nothing merge-mining early, the list is empty", async () => {
-  activate(9);
-  seedCommitment(LIVE + 1, 9, 1);
-  assert.deepEqual((await getStoredDashboardData()).preActivationBmm, []);
+  assert.equal(data.grandTotalBmmCommitments, 0);
+  assert.deepEqual(data.pendingProposals?.map((p) => [p.slot, p.votes]), [[120, 398]]);
 });
 
 test("a registered slot renders its published name, not a synthesized one", async () => {

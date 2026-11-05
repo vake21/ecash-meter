@@ -108,12 +108,8 @@ test("the page labels saved data as saved mainnet data, with height and time", a
   assert.doesNotMatch(html, /Data temporarily unavailable/);
 });
 
-test("merge-mining before activation is shown only when it happens, outside the figures", async () => {
+test("an unactivated slot that merge-mines isn't on the page, except tagged in the feed", async () => {
   seedValid();
-  let html = await renderHome();
-  assert.doesNotMatch(html, /Merge-Mining Before Activation/, "hidden when empty");
-  assert.doesNotMatch(html, /not activated/);
-
   // A commitment to slot 77, which isn't activated.
   run(
     "INSERT INTO commitments (height, slot, hstar, fee_sats) VALUES (?, ?, ?, ?)",
@@ -122,9 +118,9 @@ test("merge-mining before activation is shown only when it happens, outside the 
     "cd".repeat(32),
     9_999,
   );
-  html = await renderHome();
-  assert.match(html, /Merge-Mining Before Activation/);
-  assert.match(html, /slot 77/);
+  const html = await renderHome();
+  assert.doesNotMatch(html, /Merge-Mining Before Activation/);
+  assert.equal(html.match(/>Slot 77</g)?.length ?? 0, 1, "only the feed row names it");
   assert.match(html, /not activated/, "the activity feed tags it");
   const d = await loadDashboard(env());
   assert.ok(d.kind === "saved");

@@ -17,7 +17,6 @@ import type {
   DrivechainStats,
   FeePoint,
   PendingProposalView,
-  PreActivationView,
 } from "./types";
 import {
   ACTIVATED_DRIVECHAINS,
@@ -196,12 +195,11 @@ export async function getStoredDashboardData(
     if (a.declaration) declarations.set(a.slot, a.declaration);
   }
 
-  // Every commitment in the window (a few thousand rows at most), split by
-  // whether its slot was activated at that height. A commitment for a slot
+  // Every commitment in the window (a few thousand rows at most), keeping only
+  // those whose slot was activated at that height. A commitment for a slot
   // that isn't activated has no effect on L1 — the enforcer accepts any slot
-  // number — so it counts toward none of the figures; it's reported separately
-  // as merge-mining before activation (usually a team testing before its vote
-  // passes).
+  // number — so it counts toward none of the figures and its slot isn't listed.
+  // (Usually a team testing before its vote passes.)
   const windowRows = all<{ height: number; slot: number; date: string; time: number; fee: number }>(
     `SELECT c.height AS height, c.slot AS slot,
             strftime('%Y-%m-%d', b.time, 'unixepoch') AS date,
@@ -219,30 +217,8 @@ export async function getStoredDashboardData(
 
   // slot -> date -> {bmm, fee} (all dates in the window are contiguous).
   const tally = new Map<number, Map<string, { bmm: number; fee: number }>>();
-  const preActivation = new Map<
-    number,
-    { bmmBlocks: number; firstHeight: number; lastHeight: number; lastTime: number }
-  >();
   for (const r of windowRows) {
-    if (!isActivatedAt(r.slot, r.height)) {
-      const p = preActivation.get(r.slot);
-      if (!p) {
-        preActivation.set(r.slot, {
-          bmmBlocks: 1,
-          firstHeight: r.height,
-          lastHeight: r.height,
-          lastTime: r.time,
-        });
-      } else {
-        p.bmmBlocks++;
-        p.firstHeight = Math.min(p.firstHeight, r.height);
-        if (r.height > p.lastHeight) {
-          p.lastHeight = r.height;
-          p.lastTime = r.time;
-        }
-      }
-      continue;
-    }
+    if (!isActivatedAt(r.slot, r.height)) continue;
     let byDate = tally.get(r.slot);
     if (!byDate) tally.set(r.slot, (byDate = new Map()));
     const day = byDate.get(r.date) ?? { bmm: 0, fee: 0 };
@@ -380,25 +356,6 @@ export async function getStoredDashboardData(
         })
       : null,
     totalTreasurySats,
-    preActivationBmm: [...preActivation.entries()]
-      .map(([slot, p]): PreActivationView => {
-        // Name: a pending proposal's declaration first (that's who is testing),
-        // else whatever the registry knows about the slot.
-        const proposal = replay?.pending
-          .filter((q) => q.slot === slot)
-          .sort((a, b) => b.votes - a.votes)[0];
-        const known = resolveDrivechains([slot], declarations)[0];
-        return {
-          slot,
-          name: proposal?.declaration?.title ?? known.name,
-          description: proposal?.declaration?.description ?? known.description ?? "",
-          ...p,
-          ...(proposal
-            ? { votes: proposal.votes, votesNeeded: proposal.threshold + 1 }
-            : {}),
-        };
-      })
-      .sort((a, b) => b.lastHeight - a.lastHeight || a.slot - b.slot),
     note:
       grandTotalBmmCommitments > 0 && grandTotalFeesSats === 0
         ? "No BMM bid in this window paid a fee, so the headline is commitment activity."

@@ -25,8 +25,9 @@ resolving each against a table of published sidechain metadata (`lib/config.ts`)
 synthesizing an entry for any slot that table does not name. A hardcoded slate must never
 be able to hide real on-chain activity. A BMM commitment counts toward the figures only if
 its slot was activated at that block: the enforcer accepts a commitment for any slot, but
-one for an unactivated slot has no effect on L1. Those are listed separately, under
-**Merge-Mining Before Activation**, rather than dropped.
+one for an unactivated slot has no effect on L1. Such a slot is never listed in the table
+or counted in the cards and charts; its commitments appear only in the activity feed,
+tagged "not activated".
 Which slots are activated — and which proposals are still collecting votes, listed under
 **Pending Activation** — is replayed from the BIP 300 proposal (M1) and ack (M2) messages
 in each coinbase (`lib/proposals.ts`), using the enforcer's own rules and ECX's
@@ -71,12 +72,9 @@ but none paid a fee. Fees are an estimate because of how bids are matched — se
   stored it. If `site.local.json` sets `explorer`, blocks and transactions link to it.
 - **Pending Activation** — proposals still collecting votes, by slot: votes against the
   number needed, when proposed, and blocks left in the voting window. A proposal for an
-  occupied slot is marked as replacing (deactivating) the sidechain there.
-- **Merge-Mining Before Activation** — shown only when it happens: slots with BMM
-  commitments in the window while they weren't activated (typically a team testing
-  before its vote passes), with the block count, heights and any pending vote count.
-  These commitments are left out of every other figure; the activity feed tags them
-  "not activated".
+  occupied slot is marked as replacing (deactivating) the sidechain there. On wide
+  screens it sits beside the table at the same height; either list scrolls inside its
+  box once it has more entries than fit.
 
 ## Chain identity
 

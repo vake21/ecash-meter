@@ -6,7 +6,6 @@ import { credit, explorerUrl, learnLinks } from "@/lib/site-links";
 import { getRecentActivity, DEFAULT_ACTIVITY_LIMIT } from "@/lib/activity";
 import ActivityFeed from "@/components/ActivityFeed";
 import SidechainName from "@/components/SidechainName";
-import PreActivationBmm from "@/components/PreActivationBmm";
 import { computeFreshness } from "@/lib/freshness";
 import { orderByCustody } from "@/lib/aggregate";
 import type { PendingProposalView } from "@/lib/types";
@@ -67,12 +66,9 @@ export default async function Home({
     activatedCount,
     totalTreasurySats,
     pendingProposals,
-    preActivationBmm,
     avgBlockSeconds,
   } = data;
-  // Shown only when something has merge-mined a slot that wasn't activated.
-  const showPreActivation = (preActivationBmm?.length ?? 0) > 0;
-  const showSideColumn = pendingProposals !== undefined || showPreActivation;
+  const showSideColumn = pendingProposals !== undefined;
   const isBmm = metric === "bmm";
   // "Active" = merge-mined in the window. Activated-but-idle slots are listed
   // in the table but don't count here.
@@ -268,11 +264,11 @@ export default async function Home({
           </div>
         </section>
 
-        {/* Drivechains table with Pending activation (and any merge-mining
-            before activation) beside it on wide screens, stacked below lg.
-            The table takes the flexible width; the side column is fixed and
-            narrow. Both stretch to the taller of the two, so their bottoms line
-            up: the table's panel grows, or the side column's last box does. */}
+        {/* Drivechains table with Pending Activation beside it on wide screens,
+            stacked below lg. The table takes the flexible width; the proposals
+            a fixed narrow column. The two boxes are the same height: the table
+            sets it (capped, then it scrolls), and the proposals box fills it,
+            scrolling its list when it has more than fits. */}
         <div
           className={
             showSideColumn
@@ -388,15 +384,12 @@ export default async function Home({
         </section>
 
         {/* pending proposals — only where the data source tracks them */}
-        {showSideColumn ? (
-          <div className="flex flex-col gap-6 [&>:last-child]:flex-1">
-            {pendingProposals !== undefined ? (
-              <PendingProposals
-                proposals={pendingProposals}
-                avgBlockSeconds={avgBlockSeconds}
-              />
-            ) : null}
-            {showPreActivation ? <PreActivationBmm rows={preActivationBmm!} /> : null}
+        {pendingProposals !== undefined ? (
+          <div className="relative lg:min-h-[18rem]">
+            <PendingProposals
+              proposals={pendingProposals}
+              avgBlockSeconds={avgBlockSeconds}
+            />
           </div>
         ) : null}
         </div>
@@ -463,8 +456,10 @@ function PendingProposals({
   );
   // A compact list rather than a table: it sits in a narrow column beside the
   // Drivechains table, where five table columns wouldn't fit.
+  // On wide screens it fills its column, whose height the table sets, and the
+  // list scrolls inside it; stacked, the list scrolls past a fixed height.
   return (
-    <section className="panel rounded-2xl">
+    <section className="panel flex flex-col rounded-2xl lg:absolute lg:inset-0">
       <div className="px-5 pb-1 pt-6">
         <h2 className="text-base font-semibold tracking-tight text-neutral-100">
           <SidechainName
@@ -483,7 +478,7 @@ function PendingProposals({
           No sidechain proposals are collecting votes right now.
         </p>
       ) : (
-        <ul className="mx-2 mb-2 mt-2 max-h-[20rem] overflow-y-auto [scrollbar-color:#404040_transparent] [scrollbar-width:thin]">
+        <ul className="mx-2 mb-2 mt-2 max-h-[20rem] min-h-0 flex-1 overflow-y-auto lg:max-h-none [scrollbar-color:#404040_transparent] [scrollbar-width:thin]">
           {rows.map((p) => {
             const progress = Math.min(p.votes / p.votesNeeded, 1);
             const left = approxDuration(p.blocksLeft, avgBlockSeconds);
