@@ -463,12 +463,11 @@ function PendingProposals({
     <section className="panel rounded-2xl">
       <div className="px-5 pb-1 pt-6">
         <h2 className="text-base font-semibold tracking-tight text-neutral-100">
-          Pending activation
+          <SidechainName
+            name="Pending activation"
+            description="Sidechain proposals collecting miner votes (BIP 300). One for a slot already in use would replace — deactivate — the sidechain there."
+          />
         </h2>
-        <p className="mt-1 text-xs leading-relaxed text-neutral-500">
-          Sidechain proposals collecting miner votes (BIP 300). One for a slot
-          already in use would replace — deactivate — the sidechain there.
-        </p>
       </div>
       {proposals === null ? (
         <p className="px-5 pb-6 pt-3 text-sm text-neutral-400">

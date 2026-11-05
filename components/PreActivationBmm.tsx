@@ -13,13 +13,11 @@ export default function PreActivationBmm({ rows }: { rows: PreActivationView[] }
     <section className="panel rounded-2xl">
       <div className="px-5 pb-1 pt-6">
         <h2 className="text-base font-semibold tracking-tight text-neutral-100">
-          Merge-mining before activation
+          <SidechainName
+            name="Merge-mining before activation"
+            description="Miners have committed blocks for these slots, but they aren't activated, so the commitments have no effect on L1 yet. They're left out of the figures above."
+          />
         </h2>
-        <p className="mt-1 text-xs leading-relaxed text-neutral-500">
-          Miners have committed blocks for these slots, but they aren&apos;t
-          activated, so the commitments have no effect on L1 yet. They&apos;re
-          left out of the figures above.
-        </p>
       </div>
       <ul className="px-2 pb-2 pt-2">
         {rows.map((r) => (
