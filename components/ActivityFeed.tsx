@@ -163,17 +163,7 @@ export default function ActivityFeed({ initialEvents, limit, explorerUrl }: Prop
                 />
                 <span className="font-medium text-neutral-100">{e.name}</span>
               </span>
-              <span className="min-w-[6.5rem] text-neutral-400">
-                {KIND_LABEL[e.kind]}
-                {e.activated === false ? (
-                  <span
-                    className="ml-2 rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-neutral-500 ring-1 ring-white/10"
-                    title="This slot wasn't activated at this block, so the commitment has no effect on L1. It isn't counted in the figures above."
-                  >
-                    not activated
-                  </span>
-                ) : null}
-              </span>
+              <span className="min-w-[6.5rem] text-neutral-400">{KIND_LABEL[e.kind]}</span>
               <span className="min-w-[8rem] tabular-nums text-neutral-200">{amountText(e)}</span>
               <span className="tabular-nums text-neutral-400">
                 block {link(`block/${e.blockHash}`, `#${formatInt(e.height)}`)}
@@ -182,6 +172,14 @@ export default function ActivityFeed({ initialEvents, limit, explorerUrl }: Prop
                     {" · tx "}
                     {link(`tx/${e.txid}`, `${e.txid.slice(0, 8)}…`)}
                   </>
+                ) : null}
+                {e.activated === false ? (
+                  <span
+                    className="ml-2 rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-neutral-500 ring-1 ring-white/10"
+                    title="This slot wasn't activated at this block, so the commitment has no effect on L1. It isn't counted in the figures above."
+                  >
+                    not activated
+                  </span>
                 ) : null}
               </span>
               <span className="ml-auto text-xs tabular-nums text-neutral-500">
