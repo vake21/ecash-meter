@@ -2,7 +2,9 @@ import Link from "next/link";
 import { loadDashboard } from "@/lib/dashboard";
 import { parseWindowDays, WINDOW_OPTIONS, type WindowDays } from "@/lib/config";
 import { hasLogo, hasWallpaper, LOGO_FILE, WALLPAPER_FILE } from "@/lib/branding";
-import { credit, learnLinks } from "@/lib/site-links";
+import { credit, explorerUrl, learnLinks } from "@/lib/site-links";
+import { getRecentActivity, DEFAULT_ACTIVITY_LIMIT } from "@/lib/activity";
+import ActivityFeed from "@/components/ActivityFeed";
 import { computeFreshness } from "@/lib/freshness";
 import { orderByCustody } from "@/lib/aggregate";
 import type { PendingProposalView } from "@/lib/types";
@@ -46,6 +48,9 @@ export default async function Home({
   }
 
   const isDemo = dashboard.kind === "demo";
+  // First page of the activity feed, rendered with the page; the feed then
+  // polls /api/activity for anything newer.
+  const activity = isDemo ? null : getRecentActivity(DEFAULT_ACTIVITY_LIMIT);
   const data = dashboard.data;
   const {
     stats,
@@ -366,6 +371,15 @@ export default async function Home({
             </table>
           </div>
         </section>
+
+        {/* live activity feed — real (saved) data only; the browser keeps it fresh */}
+        {!isDemo && activity?.ok ? (
+          <ActivityFeed
+            initialEvents={activity.events}
+            limit={DEFAULT_ACTIVITY_LIMIT}
+            explorerUrl={explorerUrl}
+          />
+        ) : null}
 
         {/* pending proposals — only where the data source tracks them */}
         {pendingProposals !== undefined ? (

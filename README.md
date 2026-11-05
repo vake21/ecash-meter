@@ -61,6 +61,11 @@ but none paid a fee. Fees are an estimate because of how bids are matched — se
   shared legend.
 - **Drivechains** — a table of every observed or activated slot, **ordered by ECX held**
   and re-sorted as balances change, with BMM blocks, estimated fees and share.
+- **Recent activity** — a live feed of the latest BMM blocks (with each bid), deposits
+  and withdrawals, newest first. It is rendered with the page and then checks
+  `/api/activity` every 30 seconds (pausing while the tab is hidden), highlighting new
+  rows. "Live" means as fresh as the store: a new block appears once the indexer has
+  stored it. If `site.local.json` sets `explorer`, blocks and transactions link to it.
 - **Pending activation** — proposals still collecting votes, by slot: votes against the
   number needed, when proposed, and blocks left in the voting window. A proposal for an
   occupied slot is marked as replacing (deactivating) the sidechain there.
@@ -141,6 +146,9 @@ ECX node ──RPC──▶ indexer (timer) ──writes──▶ SQLite ◀─�
   (an integrity-checked snapshot; the newest 14 are kept). On a pruned node this matters:
   once the fork-era blocks are pruned, a lost store can't be rebuilt on that server. See
   "Backups" in [deploy/README.md](deploy/README.md#backups).
+- **`/api/activity?limit=N`** (1–100, default 25) serves the feed's events as JSON, from
+  the same validated store; `503` with a reason code when the store is unavailable or in
+  demo mode.
 - **Demo mode (`ECASH_DEMO=1`) is for development only.** It labels every view
   "DEMO — SAMPLE DATA" and makes `/api/health` return `503 demo`, so it cannot pass as
   production. A data failure never turns it on.

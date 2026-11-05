@@ -29,6 +29,7 @@ import {
   replayProposals,
   type AckRow,
   type Declaration,
+  type ProposalReplay,
   type ProposalRow,
 } from "./proposals";
 import { get, all, getMeta } from "./db";
@@ -74,6 +75,43 @@ function lastNDatesEnding(refDate: string, n: number): string[] {
   const out: string[] = [];
   for (let i = n - 1; i >= 0; i--) out.push(addDaysUTC(refDate, -i));
   return out;
+}
+
+/**
+ * Which slots are activated, from the stored BIP 300 votes — and the vote
+ * replay itself (for pending proposals and on-chain names). Needs the store to
+ * reach back to the ECX fork, where BIP 300 began; a shallower store can't see
+ * the votes that activated a slot, so it falls back to the activation table in
+ * config.ts and has no replay (pending proposals unknown).
+ */
+export function loadActivation(
+  tipHeight: number,
+  storeFloor: number,
+): {
+  replay: ProposalReplay | null;
+  activated: { slot: number; activationHeight: number }[];
+} {
+  const replay =
+    storeFloor <= ECX_FORK_HEIGHT
+      ? replayProposals(
+          all<ProposalRow>(
+            `SELECT height, vout, slot, description_hex AS descriptionHex, hash
+             FROM sidechain_proposals`,
+          ),
+          all<AckRow>("SELECT height, slot, hash FROM sidechain_acks"),
+          tipHeight,
+        )
+      : null;
+  const activated = replay
+    ? [...replay.active.values()].map((a) => ({
+        slot: a.slot,
+        activationHeight: a.activationHeight,
+      }))
+    : ACTIVATED_DRIVECHAINS.map((c) => ({
+        slot: c.slot,
+        activationHeight: c.activationHeight!,
+      }));
+  return { replay, activated };
 }
 
 /** Blocks used to measure the current block rate (~2 days at ECX's late-2026 pace). */
@@ -179,26 +217,7 @@ export async function getStoredDashboardData(
   // activated a slot, so it falls back to the activation table in config.ts
   // and reports pending proposals as unknown.
   const storeFloor = tipRow.minHeight ?? Infinity;
-  const fullHistory = storeFloor <= ECX_FORK_HEIGHT;
-  const replay = fullHistory
-    ? replayProposals(
-        all<ProposalRow>(
-          `SELECT height, vout, slot, description_hex AS descriptionHex, hash
-           FROM sidechain_proposals`,
-        ),
-        all<AckRow>("SELECT height, slot, hash FROM sidechain_acks"),
-        tipHeight,
-      )
-    : null;
-  const activated: { slot: number; activationHeight: number }[] = replay
-    ? [...replay.active.values()].map((a) => ({
-        slot: a.slot,
-        activationHeight: a.activationHeight,
-      }))
-    : ACTIVATED_DRIVECHAINS.map((c) => ({
-        slot: c.slot,
-        activationHeight: c.activationHeight!,
-      }));
+  const { replay, activated } = loadActivation(tipHeight, storeFloor);
   // On-chain names for active slots — used only where config.ts has no entry.
   const declarations = new Map<number, Declaration>();
   for (const a of replay?.active.values() ?? []) {

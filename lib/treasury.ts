@@ -52,6 +52,11 @@ const txKey = (height: number, txIndex: number) => height * 1_000_000 + txIndex;
 export interface BalanceChange {
   height: number;
   valueSats: number;
+  /**
+   * The transaction that made this change: the one creating the new treasury
+   * output. Absent when the treasury was emptied (spent with no successor).
+   */
+  txid?: string;
 }
 
 export interface TreasuryReplay {
@@ -135,7 +140,7 @@ export function replayTreasuryHistory(
           height: o.height,
           sequence,
         });
-        history.get(slot)!.push({ height, valueSats: o.valueSats });
+        history.get(slot)!.push({ height, valueSats: o.valueSats, txid: o.txid });
       } else if (spendsCurrent) {
         ctips.set(slot, null);
         history.get(slot)!.push({ height, valueSats: 0 });

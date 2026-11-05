@@ -24,6 +24,12 @@ export interface SiteCredit {
 interface SiteLocal {
   learnLinks?: LearnLink[];
   credit?: SiteCredit;
+  /**
+   * Base URL of an ECX block explorer (mempool.space-style paths). When set,
+   * the activity feed links blocks to `<explorer>/block/<hash>` and
+   * transactions to `<explorer>/tx/<txid>`; when absent, it shows plain text.
+   */
+  explorer?: string;
 }
 
 const CONFIG_FILE = join(process.cwd(), "site.local.json");
@@ -71,4 +77,10 @@ export const credit: (SiteCredit & { hasLogo: boolean }) | null = (() => {
     !c.logo.includes("/") && // keep it to a bare filename inside public/
     existsSync(join(process.cwd(), "public", c.logo));
   return { ...c, href, hasLogo };
+})();
+
+/** Explorer base URL for activity-feed links (no trailing slash), or null. */
+export const explorerUrl: string | null = (() => {
+  const href = safeHref(cfg.explorer);
+  return href ? href.replace(/\/+$/, "") : null;
 })();

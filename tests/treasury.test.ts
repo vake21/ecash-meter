@@ -152,9 +152,9 @@ test("history records every accepted balance change, including emptying", () => 
     ACTIVATED,
   );
   assert.deepEqual(history.get(46), [
-    { height: 101, valueSats: 1_000 },
-    { height: 103, valueSats: 3_000 },
-    { height: 104, valueSats: 0 },
+    { height: 101, valueSats: 1_000, txid: id("a") },
+    { height: 103, valueSats: 3_000, txid: id("b") },
+    { height: 104, valueSats: 0 }, // emptied: no successor transaction
   ]);
   assert.deepEqual(history.get(9), []);
 });

@@ -1,11 +1,15 @@
 {
-  "_comment": "Copy to site.local.json (gitignored) to add deployment-specific footer content. Both keys are optional; omit either and that part of the footer simply does not render.",
+  "_comment": "Copy to site.local.json (gitignored) to add deployment-specific content. All keys are optional; omit one and that part of the page simply does not render. `explorer` is an ECX block explorer (mempool.space-style /block/<hash> and /tx/<txid> paths) for the activity feed's links.",
   "learnLinks": [
-    { "label": "example.org", "href": "https://example.org/" }
+    {
+      "label": "example.org",
+      "href": "https://example.org/"
+    }
   ],
   "credit": {
     "label": "A Example project",
     "href": "https://example.org",
     "logo": "credit-logo.png"
-  }
+  },
+  "explorer": "https://explorer.example.org"
 }
