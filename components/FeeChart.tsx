@@ -58,9 +58,9 @@ interface Props {
   showLegend?: boolean;
 }
 
-// Chart geometry (viewBox units). Sized for a half-width panel in the 2×2
-// grid: the SVG scales to its container (~500px there), so 11-unit text lands
-// near 10.5px on screen. The canvas is sized to the panel rather than shrunk
+// Chart geometry (viewBox units). Sized for the ~440px-wide plot inside each
+// card of the scrolling chart row: the SVG scales to its container, so 11-unit
+// text lands near 9.5px on screen. The canvas is sized to the panel rather than shrunk
 // into it — a 720-wide canvas in a third-width panel once rendered ~4px text.
 const W = 520;
 const H = 240;

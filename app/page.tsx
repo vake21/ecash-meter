@@ -249,7 +249,7 @@ export default async function Home() {
           )}
         </section>
 
-        {/* charts — a 2×2 grid, same dates on every x-axis, same colour per
+        {/* charts — a horizontally scrolling row, same dates on every x-axis, same colour per
             drivechain, one shared legend */}
         <section className="mb-10">
           <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
@@ -258,18 +258,35 @@ export default async function Home() {
             </h2>
             <ChartLegend chains={legendChains} />
           </div>
-          {/* 2×2 on wide screens; one column on narrow ones. */}
-          <div className="grid gap-5 md:grid-cols-2">
-            {charts.map((c) => (
-              <ChartPanel key={c.metric} title={c.title}>
-                <FeeChart
-                  stats={stats}
-                  windowDays={windowDays}
-                  metric={c.metric}
-                  showLegend={false}
-                />
-              </ChartPanel>
-            ))}
+          {/* One row that scrolls sideways. Each chart has a fixed width, so
+              the next one peeks in at the right edge — the cue that there is
+              more — and scroll-snap lands every swipe on a chart's left edge.
+              The strip bleeds into the page gutter (-mx-6 px-6) so a chart
+              can scroll all the way to the edge rather than clipping early.
+              It is focusable, so the arrow keys scroll it too. */}
+          <div
+            role="region"
+            aria-label="Charts — scroll sideways for more"
+            tabIndex={0}
+            className="-mx-6 snap-x snap-mandatory scroll-px-6 overflow-x-auto px-6 pb-3 [scrollbar-color:#404040_transparent] [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
+          >
+            <div className="flex gap-5">
+              {charts.map((c) => (
+                <div
+                  key={c.metric}
+                  className="w-[min(85vw,30rem)] shrink-0 snap-start"
+                >
+                  <ChartPanel title={c.title}>
+                    <FeeChart
+                      stats={stats}
+                      windowDays={windowDays}
+                      metric={c.metric}
+                      showLegend={false}
+                    />
+                  </ChartPanel>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
 
