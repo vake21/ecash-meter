@@ -5,6 +5,7 @@ import { hasLogo, hasWallpaper, LOGO_FILE, WALLPAPER_FILE } from "@/lib/branding
 import { credit, explorerUrl, learnLinks } from "@/lib/site-links";
 import { getRecentActivity, DEFAULT_ACTIVITY_LIMIT } from "@/lib/activity";
 import ActivityFeed from "@/components/ActivityFeed";
+import SidechainName from "@/components/SidechainName";
 import { computeFreshness } from "@/lib/freshness";
 import { orderByCustody } from "@/lib/aggregate";
 import type { PendingProposalView } from "@/lib/types";
@@ -316,14 +317,15 @@ export default async function Home({
                           style={{ backgroundColor: r.chain.color }}
                         />
                         <div>
+                          {/* Description on hover / tap, not inline. */}
                           <div className="font-medium text-neutral-100">
-                            {r.chain.name}{" "}
+                            <SidechainName
+                              name={r.chain.name}
+                              description={r.chain.description}
+                            />{" "}
                             <span className="text-neutral-500">
                               ({r.chain.ticker})
                             </span>
-                          </div>
-                          <div className="text-xs text-neutral-500">
-                            {r.chain.description}
                           </div>
                           {r.activated && r.bmmCommitments === 0 ? (
                             <div className="mt-1 text-[11px] text-neutral-500">
@@ -487,7 +489,11 @@ function PendingProposals({
                   <span className="text-xs tabular-nums text-neutral-500">
                     slot {p.slot}
                   </span>
-                  <span className="font-medium text-neutral-100">{p.name}</span>
+                  <SidechainName
+                    name={p.name}
+                    description={p.description}
+                    className="font-medium text-neutral-100"
+                  />
                   {p.replaces ? (
                     <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-300 ring-1 ring-amber-500/30">
                       Replaces {p.replaces}
@@ -498,12 +504,6 @@ function PendingProposals({
                     </span>
                   )}
                 </div>
-                {p.description ? (
-                  <p className="mt-1 text-xs leading-relaxed text-neutral-500">
-                    {p.description}
-                  </p>
-                ) : null}
-
                 <div className="mt-2.5 flex items-baseline justify-between text-xs">
                   <span className="text-neutral-500">Votes</span>
                   <span className="tabular-nums text-neutral-100">
