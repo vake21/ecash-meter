@@ -268,13 +268,15 @@ export default async function Home({
           </div>
         </section>
 
-        {/* Drivechains table with Pending activation beside it on wide screens
-            (stacked below lg). The table takes the flexible width; the
-            proposals get a fixed narrow column. */}
+        {/* Drivechains table with Pending activation (and any merge-mining
+            before activation) beside it on wide screens, stacked below lg.
+            The table takes the flexible width; the side column is fixed and
+            narrow. Both stretch to the taller of the two, so their bottoms line
+            up: the table's panel grows, or the side column's last box does. */}
         <div
           className={
             showSideColumn
-              ? "grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]"
+              ? "grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]"
               : ""
           }
         >
@@ -385,7 +387,7 @@ export default async function Home({
 
         {/* pending proposals — only where the data source tracks them */}
         {showSideColumn ? (
-          <div className="grid gap-6">
+          <div className="flex flex-col gap-6 [&>:last-child]:flex-1">
             {pendingProposals !== undefined ? (
               <PendingProposals
                 proposals={pendingProposals}
