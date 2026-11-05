@@ -1,8 +1,9 @@
 # eCash Meter
 
-A dashboard that tracks how much each BIP 300/301 **drivechain** (sidechain) commits to
-the **eCash (ECX)** mainchain via blind-merged-mining (BMM) — both the per-chain BMM
-activity and the fees fed to L1 miners.
+A dashboard that tracks how each BIP 300/301 **drivechain** (sidechain) uses the
+**eCash (ECX)** mainchain: its blind-merged-mining (BMM) activity, the estimated fees it
+feeds to L1 miners, how much ECX it holds on L1, the deposits and withdrawals moving that
+balance, and which new sidechains are collecting miner votes to activate.
 
 > **eCash / ECX** here means the 2026 Bitcoin hard fork that activates BIP 300/301,
 > forking from Bitcoin's ledger at block 973,728 — **not** the 2021 Bitcoin Cash
@@ -47,9 +48,24 @@ rule the enforcer applies, so look-alike outputs can't inflate a balance. This n
 store to reach back to each slot's activation; if it doesn't, the balance shows as
 "unknown" rather than a wrong number.
 
-The headline metric follows the data: **fees to L1** whenever the window contains a paid
-BMM bid, falling back to **BMM commitment count** when commitments exist but none paid a
-fee.
+The headline metric follows the data: **estimated fees to L1** whenever the window
+contains a paid BMM bid, falling back to **BMM commitment count** when commitments exist
+but none paid a fee. Fees are an estimate because of how bids are matched — see
+*Fee attribution* below.
+
+## What the dashboard shows
+
+- **Summary cards** — estimated fees over the window and the last 24h, how many
+  drivechains are merge-mining out of how many are activated, and the top contributor.
+- **Four daily charts in one horizontally scrolling row** — estimated fees to L1, BMM
+  blocks, ECX held (each sidechain's balance at the end of the day), and deposits
+  (above the line) and withdrawals (below). Same dates, same colour per sidechain, one
+  shared legend.
+- **Drivechains** — a table of every observed or activated slot, **ordered by ECX held**
+  and re-sorted as balances change, with BMM blocks, estimated fees and share.
+- **Pending activation** — proposals still collecting votes, by slot: votes against the
+  number needed, when proposed, and blocks left in the voting window. A proposal for an
+  occupied slot is marked as replacing (deactivating) the sidechain there.
 
 ## Chain identity
 
@@ -64,20 +80,33 @@ into the store so a database can never be fed blocks from a different chain.
 
 ## Getting started
 
-Requires **Node ≥ 22** (uses the built-in `node:sqlite`) and, for live data, a synced
-eCash node serving mainnet JSON-RPC on `127.0.0.1:8532`.
+Requires **Node ≥ 22.13** (uses the built-in `node:sqlite`; tested on 24 and 26) and, for
+real data, a synced eCash node serving mainnet JSON-RPC on `127.0.0.1:8532`.
 
 The node must be eCash's own build — get it from
 [releases.ecash.com](https://releases.ecash.com/) (`L1-ecash-bitcoin`, channel `mainnet`).
 **Stock Bitcoin Core will not work:** ECX is a hard fork with its own consensus rules,
 network magic and ports. A node validating from genesis needs Bitcoin's entire history,
-so use eCash's published assumeutxo snapshot — see [deploy/README.md](deploy/README.md).
+so the first sync takes days. A **pruned** node is enough to run the site; an
+**unpruned** one is what can rebuild the store after a parser change (see *Rebuilding the
+store*). eCash's published assumeutxo snapshot is not used — see
+[deploy/README.md](deploy/README.md).
 
 ```bash
 npm install                 # install dependencies
 cp .env.example .env.local  # create your local config (adjust if needed)
 npm run index               # scan the node and populate the SQLite store
 npm run dev                 # start the site at http://localhost:3000
+```
+
+The first `npm run index` backfills every block since the ECX fork — treasury balances
+and the activation replay need that full history — so it takes a while (about 12 minutes
+for the first ~9,400 post-fork blocks, growing with the chain). Later runs only fetch new
+blocks.
+
+```bash
+npm test                    # unit tests (node:test)
+npm run lint                # ESLint
 ```
 
 Without a node, set `ECASH_DEMO=1` in `.env.local` to work on the UI against sample data.
@@ -110,6 +139,10 @@ ECX node ──RPC──▶ indexer (timer) ──writes──▶ SQLite ◀─�
   `demo`). A stale store still shows its saved data, but reports `503` so monitoring
   catches a stalled indexer. The response carries no file paths or error text, only
   reason codes and stored/expected stamps.
+- **The store is backed up daily** by a systemd timer running `deploy/backup-db.mjs`
+  (an integrity-checked snapshot; the newest 14 are kept). On a pruned node this matters:
+  once the fork-era blocks are pruned, a lost store can't be rebuilt on that server. See
+  "Backups" in [deploy/README.md](deploy/README.md#backups).
 - **Demo mode (`ECASH_DEMO=1`) is for development only.** It labels every view
   "DEMO — SAMPLE DATA" and makes `/api/health` return `503 demo`, so it cannot pass as
   production. A data failure never turns it on.
@@ -141,10 +174,13 @@ time. To rebuild from scratch:
 rm .data/ecash-meter.sqlite && npm run index
 ```
 
-The indexer stamps each database with the fee-attribution parser version it was written
-with. If you upgrade to a build whose fee math changed, the indexer detects the mismatch
-and **refuses to append to the old cache** (so stale fees can't silently linger) — it
-prints the `rm … && npm run index` command above. Rebuilding re-fetches the backfill range from the node.
+The indexer stamps each database with the parser version it was written with
+(`PARSER_VERSION` in `lib/bmm.ts`, bumped whenever block parsing changes — fee
+attribution, treasury events or proposal votes). If you upgrade to a build with a
+different parser, the indexer detects the mismatch and **refuses to append to the old
+cache** (so outdated figures can't silently linger) — it prints the
+`rm … && npm run index` command above — and the site shows "Data temporarily
+unavailable" until the store is rebuilt. Rebuilding re-reads every block since the fork.
 
 **A pruned node can only rebuild while it still holds the blocks back to the ECX fork.**
 After that, rebuild on a machine with an unpruned ECX node and upload the file, and keep
@@ -183,8 +219,11 @@ All settings live in `.env.local` (see `.env.example` for the full list). Key on
 | `ECASH_METER_DB` | Path to the SQLite file (default `./.data/ecash-meter.sqlite`); read by the site, written by the indexer |
 | `ECASH_DEMO` | `1` = show labelled sample data instead of the store. Development only |
 | `ECASH_RPC_URL` / `ECASH_RPC_USER` / `ECASH_RPC_PASS` | Indexer only: the ECX mainnet node's JSON-RPC |
-| `ECASH_BACKFILL_BLOCKS` | Indexer only: blocks to backfill on the first run (clamps to the ECX fork) |
-| `ECASH_INDEX_CHUNK` | Blocks fetched + committed per transaction (default 250) |
+| `ECASH_BACKFILL_BLOCKS` | Indexer only: blocks to backfill on the first run (clamps to the ECX fork; set it large enough to reach the fork) |
+| `ECASH_INDEX_CHUNK` | Indexer only: blocks fetched + committed per transaction (default 250) |
+| `ECASH_RPC_TIMEOUT_MS` | Indexer only: per-request RPC timeout. Raise it (e.g. 120000) for long backfills — a node flushing its cache can stall RPC for tens of seconds |
+| `ECASH_RPC_CONCURRENCY` | Indexer only: parallel RPC requests (default 8; keep below the node's `rpcthreads`) |
+| `ECASH_BACKUP_DIR` / `ECASH_BACKUP_KEEP` | Backup script only: where `deploy/backup-db.mjs` writes snapshots, and how many daily ones to keep (default 14) |
 
 ## Tech stack
 
