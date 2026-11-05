@@ -16,6 +16,7 @@ import { all } from "./db";
 import { resolveDrivechains } from "./config";
 import { checkStore, logStoreProblem, type UnavailableReason } from "./store-check";
 import { activationCheck, loadActivation } from "./store";
+import { decodeDeclaration, type Declaration, type ProposalReplay } from "./proposals";
 import {
   replayTreasuryHistory,
   type TreasuryOutputRow,
@@ -79,7 +80,7 @@ export function getRecentActivity(limit: number = DEFAULT_ACTIVITY_LIMIT): Activ
   // Activated slots exactly as the dashboard determines them.
   const minHeight =
     all<{ m: number | null }>("SELECT MIN(height) AS m FROM blocks")[0]?.m ?? Infinity;
-  const { activated } = loadActivation(tipHeight, minHeight);
+  const { replay, activated } = loadActivation(tipHeight, minHeight);
   const isActivatedAt = activationCheck(activated);
   const { history } = replayTreasuryHistory(
     all<TreasuryOutputRow>(
@@ -120,7 +121,10 @@ export function getRecentActivity(limit: number = DEFAULT_ACTIVITY_LIMIT): Activ
   );
 
   const chains = new Map(
-    resolveDrivechains([...bmm.map((r) => r.slot), ...recentFlows.map((f) => f.slot)]).map((c) => [
+    resolveDrivechains(
+      [...bmm.map((r) => r.slot), ...recentFlows.map((f) => f.slot)],
+      slotDeclarations(replay),
+    ).map((c) => [
       c.slot,
       c,
     ]),
@@ -165,4 +169,30 @@ export function getRecentActivity(limit: number = DEFAULT_ACTIVITY_LIMIT): Activ
     (a, b) => b.height - a.height || order[a.kind] - order[b.kind] || a.slot - b.slot,
   );
   return { ok: true, tipHeight, events: events.slice(0, n) };
+}
+
+/**
+ * The best on-chain name for every slot that has ever been proposed, so the
+ * feed can name a slot even before it's activated (published names in
+ * config.ts still come first). Preference: the active sidechain's own
+ * declaration, then the pending proposal with the most votes, then the most
+ * recent proposal for the slot. A slot never proposed falls back to "Slot N".
+ */
+function slotDeclarations(replay: ProposalReplay | null): Map<number, Declaration> {
+  const names = new Map<number, Declaration>();
+  const stored = all<{ slot: number; descriptionHex: string }>(
+    `SELECT slot, description_hex AS descriptionHex FROM sidechain_proposals
+     ORDER BY height, vout`,
+  );
+  for (const p of stored) {
+    const d = decodeDeclaration(p.descriptionHex);
+    if (d) names.set(p.slot, d);
+  }
+  for (const p of [...(replay?.pending ?? [])].sort((a, b) => a.votes - b.votes)) {
+    if (p.declaration) names.set(p.slot, p.declaration);
+  }
+  for (const a of replay?.active.values() ?? []) {
+    if (a.declaration) names.set(a.slot, a.declaration);
+  }
+  return names;
 }

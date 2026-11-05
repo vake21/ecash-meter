@@ -106,6 +106,35 @@ test("a BMM commitment to an unactivated slot is tagged, not hidden", () => {
   assert.equal(html.match(/not activated/g)?.length, 1);
 });
 
+test("an unactivated slot is named from its proposal, else by number", () => {
+  seed();
+  const t = Buffer.from("Shuttle", "utf8");
+  const declaration = Buffer.concat([
+    Buffer.from([0, t.length]),
+    t,
+    Buffer.from("Tokens on a fast chain", "utf8"),
+    Buffer.alloc(52),
+  ]).toString("hex");
+  run(
+    "INSERT INTO sidechain_proposals (height, vout, slot, description_hex, hash) VALUES (983000, 0, 47, ?, ?)",
+    declaration,
+    "d".repeat(64),
+  );
+  for (const [h, slot] of [[983_002, 47], [983_004, 78]]) {
+    run(
+      "INSERT INTO commitments (height, slot, hstar, fee_sats) VALUES (?, ?, ?, 0)",
+      h, slot, (h * 1000 + slot).toString(16).padStart(64, "0"),
+    );
+  }
+  const r = getRecentActivity(25);
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  const name = (slot: number) => r.events.find((e) => e.slot === slot)?.name;
+  assert.equal(name(47), "Shuttle");
+  assert.equal(name(78), "Slot 78");
+  assert.equal(name(46), "Flush", "a published name still wins");
+});
+
 test("the limit caps the merged list, keeping the newest", () => {
   seed();
   const r = getRecentActivity(2);
