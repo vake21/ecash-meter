@@ -126,6 +126,11 @@ export interface DashboardData {
    */
   pendingProposals?: PendingProposalView[] | null;
   /**
+   * Slots with BMM commitments in the window that weren't activated at the
+   * time (left out of every other figure). Undefined when not tracked.
+   */
+  preActivationBmm?: PreActivationView[];
+  /**
    * Mean seconds per L1 block over the stored history, for turning block
    * counts into rough durations. Absent when it can't be measured.
    */
@@ -162,4 +167,24 @@ export interface PendingProposalView {
    * — if it passes; null for a proposal on an empty slot.
    */
   replaces: string | null;
+}
+
+/**
+ * A slot miners committed BMM blocks to while it wasn't activated. Such
+ * commitments have no effect on L1; usually a team testing before its vote.
+ */
+export interface PreActivationView {
+  slot: number;
+  /** From a pending proposal's declaration if there is one, else "Slot N". */
+  name: string;
+  description: string;
+  /** Commitments for the slot in the window, while not activated. */
+  bmmBlocks: number;
+  firstHeight: number;
+  lastHeight: number;
+  /** Unix seconds of the block at lastHeight. */
+  lastTime: number;
+  /** Votes so far and needed, when a proposal for the slot is pending. */
+  votes?: number;
+  votesNeeded?: number;
 }

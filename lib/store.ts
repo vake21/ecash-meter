@@ -17,6 +17,7 @@ import type {
   DrivechainStats,
   FeePoint,
   PendingProposalView,
+  PreActivationView,
 } from "./types";
 import {
   ACTIVATED_DRIVECHAINS,
@@ -45,13 +46,6 @@ import {
 
 /** Thrown when the store has no data yet (caller can fall back to mock). */
 export class EmptyStoreError extends Error {}
-
-interface AggRow {
-  slot: number;
-  date: string;
-  bmm: number;
-  fee: number;
-}
 
 const DAY_SECONDS = 86_400;
 
@@ -114,6 +108,22 @@ export function loadActivation(
   return { replay, activated };
 }
 
+/**
+ * Whether a commitment at `height` for `slot` counts as merge-mining an
+ * activated sidechain: the slot is activated and the block is at or after its
+ * activation. Anything else (a slot never activated, or a sidechain's blocks
+ * from before its vote passed) has no effect on L1.
+ */
+export function activationCheck(
+  activated: { slot: number; activationHeight: number }[],
+): (slot: number, height: number) => boolean {
+  const from = new Map(activated.map((a) => [a.slot, a.activationHeight]));
+  return (slot, height) => {
+    const h = from.get(slot);
+    return h !== undefined && height >= h;
+  };
+}
+
 /** Blocks used to measure the current block rate (~2 days at ECX's late-2026 pace). */
 const RATE_WINDOW_BLOCKS = 432;
 
@@ -172,37 +182,74 @@ export async function getStoredDashboardData(
   const dates = lastNDatesEnding(refDate, shownDays);
   const windowStart = dates[0];
 
-  // Per slot/day aggregates within the window.
-  const rows = all<AggRow>(
-    `SELECT c.slot AS slot,
+  // Which slots are activated, and which proposals are pending, replayed from
+  // the stored BIP 300 messages. That needs the store to reach back to the ECX
+  // fork, where BIP 300 began; a shallower store can't see the votes that
+  // activated a slot, so it falls back to the activation table in config.ts
+  // and reports pending proposals as unknown.
+  const storeFloor = tipRow.minHeight ?? Infinity;
+  const { replay, activated } = loadActivation(tipHeight, storeFloor);
+  const isActivatedAt = activationCheck(activated);
+  // On-chain names for active slots — used only where config.ts has no entry.
+  const declarations = new Map<number, Declaration>();
+  for (const a of replay?.active.values() ?? []) {
+    if (a.declaration) declarations.set(a.slot, a.declaration);
+  }
+
+  // Every commitment in the window (a few thousand rows at most), split by
+  // whether its slot was activated at that height. A commitment for a slot
+  // that isn't activated has no effect on L1 — the enforcer accepts any slot
+  // number — so it counts toward none of the figures; it's reported separately
+  // as merge-mining before activation (usually a team testing before its vote
+  // passes).
+  const windowRows = all<{ height: number; slot: number; date: string; time: number; fee: number }>(
+    `SELECT c.height AS height, c.slot AS slot,
             strftime('%Y-%m-%d', b.time, 'unixepoch') AS date,
-            COUNT(*) AS bmm,
-            COALESCE(SUM(c.fee_sats), 0) AS fee
+            b.time AS time, COALESCE(c.fee_sats, 0) AS fee
      FROM commitments c
      JOIN blocks b ON b.height = c.height
-     WHERE strftime('%Y-%m-%d', b.time, 'unixepoch') >= ?
-     GROUP BY c.slot, date`,
+     WHERE strftime('%Y-%m-%d', b.time, 'unixepoch') >= ?`,
     windowStart,
   );
 
   // Rolling 24h: fees on blocks newer than (latest block time − 24h), per slot.
+  // (The window always covers the last 24h, so these rows are a subset.)
   const cutoff = lastBlockTime - DAY_SECONDS;
-  const last24Rows = all<{ slot: number; fee: number }>(
-    `SELECT c.slot AS slot, COALESCE(SUM(c.fee_sats), 0) AS fee
-     FROM commitments c
-     JOIN blocks b ON b.height = c.height
-     WHERE b.time > ?
-     GROUP BY c.slot`,
-    cutoff,
-  );
-  const last24BySlot = new Map(last24Rows.map((r) => [r.slot, r.fee]));
+  const last24BySlot = new Map<number, number>();
 
   // slot -> date -> {bmm, fee} (all dates in the window are contiguous).
   const tally = new Map<number, Map<string, { bmm: number; fee: number }>>();
-  for (const r of rows) {
+  const preActivation = new Map<
+    number,
+    { bmmBlocks: number; firstHeight: number; lastHeight: number; lastTime: number }
+  >();
+  for (const r of windowRows) {
+    if (!isActivatedAt(r.slot, r.height)) {
+      const p = preActivation.get(r.slot);
+      if (!p) {
+        preActivation.set(r.slot, {
+          bmmBlocks: 1,
+          firstHeight: r.height,
+          lastHeight: r.height,
+          lastTime: r.time,
+        });
+      } else {
+        p.bmmBlocks++;
+        p.firstHeight = Math.min(p.firstHeight, r.height);
+        if (r.height > p.lastHeight) {
+          p.lastHeight = r.height;
+          p.lastTime = r.time;
+        }
+      }
+      continue;
+    }
     let byDate = tally.get(r.slot);
     if (!byDate) tally.set(r.slot, (byDate = new Map()));
-    byDate.set(r.date, { bmm: r.bmm, fee: r.fee });
+    const day = byDate.get(r.date) ?? { bmm: 0, fee: 0 };
+    day.bmm++;
+    day.fee += r.fee;
+    byDate.set(r.date, day);
+    if (r.time > cutoff) last24BySlot.set(r.slot, (last24BySlot.get(r.slot) ?? 0) + r.fee);
   }
 
   // Rows come from the slots actually present in the window (plus any slot with
@@ -211,19 +258,6 @@ export async function getStoredDashboardData(
   // vanished from the site. resolveDrivechains() supplies metadata, synthesizing
   // an entry for a slot we have no published name for.
   //
-  // Which slots are activated, and which proposals are pending, replayed from
-  // the stored BIP 300 messages. That needs the store to reach back to the ECX
-  // fork, where BIP 300 began; a shallower store can't see the votes that
-  // activated a slot, so it falls back to the activation table in config.ts
-  // and reports pending proposals as unknown.
-  const storeFloor = tipRow.minHeight ?? Infinity;
-  const { replay, activated } = loadActivation(tipHeight, storeFloor);
-  // On-chain names for active slots — used only where config.ts has no entry.
-  const declarations = new Map<number, Declaration>();
-  for (const a of replay?.active.values() ?? []) {
-    if (a.declaration) declarations.set(a.slot, a.declaration);
-  }
-
   // Activated slots are listed too, even with no BMM activity in the window:
   // an activated sidechain that isn't merge-mining yet can still hold coins.
   const activatedSlots = new Set(activated.map((c) => c.slot));
@@ -346,6 +380,25 @@ export async function getStoredDashboardData(
         })
       : null,
     totalTreasurySats,
+    preActivationBmm: [...preActivation.entries()]
+      .map(([slot, p]): PreActivationView => {
+        // Name: a pending proposal's declaration first (that's who is testing),
+        // else whatever the registry knows about the slot.
+        const proposal = replay?.pending
+          .filter((q) => q.slot === slot)
+          .sort((a, b) => b.votes - a.votes)[0];
+        const known = resolveDrivechains([slot], declarations)[0];
+        return {
+          slot,
+          name: proposal?.declaration?.title ?? known.name,
+          description: proposal?.declaration?.description ?? known.description ?? "",
+          ...p,
+          ...(proposal
+            ? { votes: proposal.votes, votesNeeded: proposal.threshold + 1 }
+            : {}),
+        };
+      })
+      .sort((a, b) => b.lastHeight - a.lastHeight || a.slot - b.slot),
     note:
       grandTotalBmmCommitments > 0 && grandTotalFeesSats === 0
         ? "No BMM bid in this window paid a fee, so the headline is commitment activity."

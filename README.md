@@ -20,10 +20,13 @@ ECX mainnet     block indexer        history store                     reads the
 - **Store** is a single SQLite file via Node's built-in `node:sqlite` — no database server.
 - **Site** reads purely from the store, so it renders even when the node is offline.
 
-The dashboard shows **every slot it observes being merge-mined, plus every slot activated
-on ECX** (even one with no BMM blocks yet), resolving each against a table of published
-sidechain metadata (`lib/config.ts`) and synthesizing an entry for any slot that table
-does not name. A hardcoded slate must never be able to hide real on-chain activity.
+The dashboard shows **every slot activated on ECX** (even one with no BMM blocks yet),
+resolving each against a table of published sidechain metadata (`lib/config.ts`) and
+synthesizing an entry for any slot that table does not name. A hardcoded slate must never
+be able to hide real on-chain activity. A BMM commitment counts toward the figures only if
+its slot was activated at that block: the enforcer accepts a commitment for any slot, but
+one for an unactivated slot has no effect on L1. Those are listed separately, under
+**Merge-mining before activation**, rather than dropped.
 Which slots are activated — and which proposals are still collecting votes, listed under
 **Pending activation** — is replayed from the BIP 300 proposal (M1) and ack (M2) messages
 in each coinbase (`lib/proposals.ts`), using the enforcer's own rules and ECX's
@@ -59,7 +62,7 @@ but none paid a fee. Fees are an estimate because of how bids are matched — se
   blocks, ECX held (each sidechain's balance at the end of the day), and deposits
   (above the line) and withdrawals (below). Same dates, same colour per sidechain, one
   shared legend.
-- **Activated Drivechains** — a table of every activated (or observed) slot, **ordered by ECX held**
+- **Activated Drivechains** — a table of every activated slot, **ordered by ECX held**
   and re-sorted as balances change, with BMM blocks, estimated fees and share.
 - **Recent activity** — a live feed of the latest BMM blocks (with each bid), deposits
   and withdrawals, newest first. It is rendered with the page and then checks
@@ -69,6 +72,11 @@ but none paid a fee. Fees are an estimate because of how bids are matched — se
 - **Pending activation** — proposals still collecting votes, by slot: votes against the
   number needed, when proposed, and blocks left in the voting window. A proposal for an
   occupied slot is marked as replacing (deactivating) the sidechain there.
+- **Merge-mining before activation** — shown only when it happens: slots with BMM
+  commitments in the window while they weren't activated (typically a team testing
+  before its vote passes), with the block count, heights and any pending vote count.
+  These commitments are left out of every other figure; the activity feed tags them
+  "not activated".
 
 ## Chain identity
 

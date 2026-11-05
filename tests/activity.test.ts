@@ -88,6 +88,24 @@ test("events: BMM blocks, deposits and withdrawals, newest first", () => {
   assert.equal(w.time, NOW);
 });
 
+test("a BMM commitment to an unactivated slot is tagged, not hidden", () => {
+  seed();
+  run(
+    "INSERT INTO commitments (height, slot, hstar, fee_sats) VALUES (983002, 77, ?, 0)",
+    "e".repeat(64),
+  );
+  const r = getRecentActivity(25);
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  const early = r.events.find((e) => e.slot === 77)!;
+  assert.equal(early.activated, false);
+  assert.ok(r.events.filter((e) => e.slot !== 77).every((e) => e.activated));
+  const html = renderToStaticMarkup(
+    React.createElement(ActivityFeed, { initialEvents: r.events, limit: 25, explorerUrl: null }),
+  );
+  assert.equal(html.match(/not activated/g)?.length, 1);
+});
+
 test("the limit caps the merged list, keeping the newest", () => {
   seed();
   const r = getRecentActivity(2);

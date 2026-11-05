@@ -75,6 +75,15 @@ function propose(slot: number, title: string, at: number, acks: number, vout = 0
   }
 }
 const ACTIVATE = 1_816;
+/**
+ * Activate each slot through real votes (proposed at block 10, active from
+ * ~1,827). Only commitments to an activated slot count toward the figures, so
+ * tests put theirs at LIVE + n, after every activation.
+ */
+function activate(...slots: number[]) {
+  slots.forEach((slot, i) => propose(slot, `S${slot}`, 10, ACTIVATE, i));
+}
+const LIVE = 5_000;
 
 beforeEach(() => {
   process.env.ECASH_METER_DB = ":memory:";
@@ -85,10 +94,11 @@ beforeEach(() => {
 afterEach(() => closeDb());
 
 test("fee mode ranks the quiet high-paying chain first (BitAssets over BitNames)", async () => {
+  activate(2, 4);
   // BitNames (slot 2): 10 commitments, 10 sats total.
-  for (let h = 1; h <= 10; h++) seedCommitment(h, 2, 1);
+  for (let h = 1; h <= 10; h++) seedCommitment(LIVE + h, 2, 1);
   // BitAssets (slot 4): 1 commitment, 1000 sats.
-  seedCommitment(11, 4, 1000);
+  seedCommitment(LIVE + 11, 4, 1000);
 
   const data = await getStoredDashboardData();
   assert.equal(data.metric, "fees");
@@ -101,17 +111,19 @@ test("fee mode ranks the quiet high-paying chain first (BitAssets over BitNames)
 });
 
 test("no fees → bmm mode, ranked by commitment count", async () => {
-  for (let h = 1; h <= 5; h++) seedCommitment(h, 2, 0); // BitNames: 5 commitments
-  seedCommitment(6, 4, 0); // BitAssets: 1 commitment
+  activate(2, 4);
+  for (let h = 1; h <= 5; h++) seedCommitment(LIVE + h, 2, 0); // BitNames: 5 commitments
+  seedCommitment(LIVE + 6, 4, 0); // BitAssets: 1 commitment
   const data = await getStoredDashboardData();
   assert.equal(data.metric, "bmm");
   assert.equal(data.stats[0].chain.slot, 2); // 5 > 1
 });
 
 test("a zero-activity calendar day appears in the series with zero values", async () => {
+  activate(2);
   // Activity on day D-2 and day D, but NONE on D-1 → D-1 must be present as zero.
-  seedCommitment(1, 2, 5, TIME - 2 * DAY);
-  seedCommitment(2, 2, 7, TIME); // latest block → reference date = D
+  seedCommitment(LIVE + 1, 2, 5, TIME - 2 * DAY);
+  seedCommitment(LIVE + 2, 2, 7, TIME); // latest block → reference date = D
   const data = await getStoredDashboardData();
   assert.equal(data.windowDays, 3);
   const s2 = data.stats.find((s) => s.chain.slot === 2)!;
@@ -123,8 +135,9 @@ test("a zero-activity calendar day appears in the series with zero values", asyn
 });
 
 test("window is exactly 30 dates and never reaches past 30 calendar days", async () => {
-  seedCommitment(1, 2, 1, TIME - 40 * DAY); // sparse activity 40 days ago
-  seedCommitment(2, 2, 1, TIME); // latest block
+  activate(2);
+  seedCommitment(LIVE + 1, 2, 1, TIME - 40 * DAY); // sparse activity 40 days ago
+  seedCommitment(LIVE + 2, 2, 1, TIME); // latest block
   const data = await getStoredDashboardData();
   assert.equal(data.windowDays, 30);
   for (const s of data.stats) assert.equal(s.series.length, 30);
@@ -133,17 +146,19 @@ test("window is exactly 30 dates and never reaches past 30 calendar days", async
 });
 
 test("rolling 24h includes records inside the boundary and excludes older ones", async () => {
-  seedCommitment(1, 2, 999, TIME - 90_000); // ~25h old → excluded
-  seedCommitment(2, 2, 50, TIME - 1_000); // within 24h → included
-  seedCommitment(3, 2, 100, TIME); // latest → included
+  activate(2);
+  seedCommitment(LIVE + 1, 2, 999, TIME - 90_000); // ~25h old → excluded
+  seedCommitment(LIVE + 2, 2, 50, TIME - 1_000); // within 24h → included
+  seedCommitment(LIVE + 3, 2, 100, TIME); // latest → included
   const data = await getStoredDashboardData();
   const s2 = data.stats.find((s) => s.chain.slot === 2)!;
   assert.equal(s2.feesLast24hSats, 150); // 50 + 100, not 999
 });
 
 test("lastBlockTime is exposed so the UI can flag stale data", async () => {
-  seedCommitment(1, 2, 1, TIME - 5 * DAY);
-  seedCommitment(2, 2, 1, TIME);
+  activate(2);
+  seedCommitment(LIVE + 1, 2, 1, TIME - 5 * DAY);
+  seedCommitment(LIVE + 2, 2, 1, TIME);
   const data = await getStoredDashboardData();
   assert.equal(data.lastBlockTime, TIME); // the most recent block time
 });
@@ -162,15 +177,16 @@ test("lastBlockTime is exposed so the UI can flag stale data", async () => {
 const UNREGISTERED_SLOT = 77;
 
 test("a slot missing from the registry still renders, with its fees", async () => {
-  seedCommitment(1, UNREGISTERED_SLOT, 564);
+  activate(UNREGISTERED_SLOT);
+  seedCommitment(LIVE + 1, UNREGISTERED_SLOT, 564);
   const data = await getStoredDashboardData();
 
   const row = data.stats.find((s) => s.chain.slot === UNREGISTERED_SLOT);
   assert.ok(row, "an unnamed slot must appear — dropping it understates total fees");
   assert.equal(row.totalFeesSats, 564);
   assert.equal(row.bmmCommitments, 1);
-  // Synthesized metadata, not a crash and not a blank name.
-  assert.equal(row.chain.name, `Slot ${UNREGISTERED_SLOT}`);
+  // Its on-chain name, and synthesized metadata for the rest — not a crash.
+  assert.equal(row.chain.name, `S${UNREGISTERED_SLOT}`);
   assert.equal(row.chain.ticker, `S${UNREGISTERED_SLOT}`);
   assert.match(row.chain.color, /^#[0-9a-f]{6}$/i);
   // It is the only active chain, so it carries the whole headline.
@@ -180,10 +196,10 @@ test("a slot missing from the registry still renders, with its fees", async () =
 });
 
 test("rows are the observed slots plus activated ones, not the whole registry", async () => {
-  seedCommitment(1, 9, 100); // Thunder, a registered slot
-  seedCommitment(2, UNREGISTERED_SLOT, 50); // unregistered
-  // Activate ECX's five slots through real M1/M2 votes.
-  for (const [i, slot] of [9, 24, 46, 130, 131].entries()) {
+  seedCommitment(LIVE + 1, 9, 100); // Thunder, a registered slot
+  seedCommitment(LIVE + 2, UNREGISTERED_SLOT, 50); // unregistered
+  // Activate ECX's five slots, and the unregistered one, through real M1/M2 votes.
+  for (const [i, slot] of [9, 24, 46, 130, 131, UNREGISTERED_SLOT].entries()) {
     propose(slot, `S${slot}`, 10, ACTIVATE, i);
   }
   const data = await getStoredDashboardData();
@@ -198,7 +214,7 @@ test("rows are the observed slots plus activated ones, not the whole registry", 
   assert.equal(idle.activated, true);
   assert.equal(idle.bmmCommitments, 0);
   assert.equal(idle.shareOfTotal, 0);
-  assert.equal(data.activatedCount, 5);
+  assert.equal(data.activatedCount, 6);
   // A registered slot keeps its published metadata and its validated colour.
   const thunder = data.stats.find((s) => s.chain.slot === 9)!;
   assert.equal(thunder.chain.name, "Thunder");
@@ -208,10 +224,74 @@ test("rows are the observed slots plus activated ones, not the whole registry", 
   assert.notEqual(unknown.chain.color, thunder.chain.color);
 });
 
+// ── Merge-mining before activation ───────────────────────────────────────────
+// A commitment is just bytes in the coinbase; the enforcer accepts one for any
+// slot. Only commitments to a slot activated at that height count toward the
+// figures. The rest are listed separately.
+
+test("commitments to unactivated slots are left out of every figure and listed separately", async () => {
+  activate(9);
+  seedCommitment(LIVE + 1, 9, 100); // Thunder, activated: counts
+  seedCommitment(LIVE + 2, UNREGISTERED_SLOT, 5_000); // never activated
+  seedCommitment(LIVE + 3, UNREGISTERED_SLOT, 0);
+  seedCommitment(LIVE + 4, 24, 0); // a registered slot, but not activated here
+  const data = await getStoredDashboardData();
+
+  assert.deepEqual(data.stats.map((s) => s.chain.slot), [9]);
+  assert.equal(data.grandTotalFeesSats, 100);
+  assert.equal(data.grandTotalBmmCommitments, 1);
+  assert.equal(data.stats[0].shareOfTotal, 1);
+  assert.equal(data.stats[0].feesLast24hSats, 100);
+
+  assert.deepEqual(
+    data.preActivationBmm?.map((p) => [p.slot, p.bmmBlocks, p.firstHeight, p.lastHeight]),
+    [
+      [24, 1, LIVE + 4, LIVE + 4],
+      [UNREGISTERED_SLOT, 2, LIVE + 2, LIVE + 3],
+    ],
+  );
+  assert.equal(data.preActivationBmm?.[0].name, "Elements+");
+  assert.equal(data.preActivationBmm?.[1].name, `Slot ${UNREGISTERED_SLOT}`);
+  assert.equal(data.preActivationBmm?.[1].votes, undefined);
+});
+
+test("a sidechain's commitments from before its activation don't count", async () => {
+  propose(9, "Thunder", 3_000, ACTIVATE); // active from ~4,817
+  seedCommitment(2_000, 9, 70); // before the proposal
+  seedCommitment(LIVE + 1, 9, 30); // after activation
+  const data = await getStoredDashboardData();
+  const thunder = data.stats.find((s) => s.chain.slot === 9)!;
+  assert.equal(thunder.bmmCommitments, 1);
+  assert.equal(thunder.totalFeesSats, 30);
+  assert.deepEqual(
+    data.preActivationBmm?.map((p) => [p.slot, p.bmmBlocks, p.lastHeight]),
+    [[9, 1, 2_000]],
+  );
+});
+
+test("a slot merge-mining while its proposal collects votes shows the vote count", async () => {
+  propose(120, "Shuttle", LIVE - 500, 398); // pending, still inside its window
+  seedCommitment(LIVE + 1, 120, 0);
+  const data = await getStoredDashboardData();
+  assert.equal(data.stats.length, 0);
+  const [p] = data.preActivationBmm!;
+  assert.equal(p.name, "Shuttle");
+  assert.equal(p.description, "Shuttle description");
+  assert.equal(p.votes, 398);
+  assert.equal(p.votesNeeded, ACTIVATE);
+});
+
+test("with nothing merge-mining early, the list is empty", async () => {
+  activate(9);
+  seedCommitment(LIVE + 1, 9, 1);
+  assert.deepEqual((await getStoredDashboardData()).preActivationBmm, []);
+});
+
 test("a registered slot renders its published name, not a synthesized one", async () => {
+  activate(46);
   // Slot 46 went from unnamed to Flush on 2026-11-02; resolving a registered
   // slot must prefer the table over the synthesized fallback.
-  seedCommitment(1, 46, 999);
+  seedCommitment(LIVE + 1, 46, 999);
   const data = await getStoredDashboardData();
   const row = data.stats.find((s) => s.chain.slot === 46)!;
   assert.equal(row.chain.name, "Flush");
@@ -220,7 +300,8 @@ test("a registered slot renders its published name, not a synthesized one", asyn
 });
 
 test("a slot with only rolling-24h activity is not dropped", async () => {
-  seedCommitment(1, 255, 7);
+  activate(255);
+  seedCommitment(LIVE + 1, 255, 7);
   const data = await getStoredDashboardData();
   const row = data.stats.find((s) => s.chain.slot === 255)!;
   assert.equal(row.feesLast24hSats, 7);

@@ -6,6 +6,7 @@ import { credit, explorerUrl, learnLinks } from "@/lib/site-links";
 import { getRecentActivity, DEFAULT_ACTIVITY_LIMIT } from "@/lib/activity";
 import ActivityFeed from "@/components/ActivityFeed";
 import SidechainName from "@/components/SidechainName";
+import PreActivationBmm from "@/components/PreActivationBmm";
 import { computeFreshness } from "@/lib/freshness";
 import { orderByCustody } from "@/lib/aggregate";
 import type { PendingProposalView } from "@/lib/types";
@@ -66,8 +67,12 @@ export default async function Home({
     activatedCount,
     totalTreasurySats,
     pendingProposals,
+    preActivationBmm,
     avgBlockSeconds,
   } = data;
+  // Shown only when something has merge-mined a slot that wasn't activated.
+  const showPreActivation = (preActivationBmm?.length ?? 0) > 0;
+  const showSideColumn = pendingProposals !== undefined || showPreActivation;
   const isBmm = metric === "bmm";
   // "Active" = merge-mined in the window. Activated-but-idle slots are listed
   // in the table but don't count here.
@@ -268,7 +273,7 @@ export default async function Home({
             proposals get a fixed narrow column. */}
         <div
           className={
-            pendingProposals !== undefined
+            showSideColumn
               ? "grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]"
               : ""
           }
@@ -379,11 +384,16 @@ export default async function Home({
         </section>
 
         {/* pending proposals — only where the data source tracks them */}
-        {pendingProposals !== undefined ? (
-          <PendingProposals
-            proposals={pendingProposals}
-            avgBlockSeconds={avgBlockSeconds}
-          />
+        {showSideColumn ? (
+          <div className="grid gap-6">
+            {pendingProposals !== undefined ? (
+              <PendingProposals
+                proposals={pendingProposals}
+                avgBlockSeconds={avgBlockSeconds}
+              />
+            ) : null}
+            {showPreActivation ? <PreActivationBmm rows={preActivationBmm!} /> : null}
+          </div>
         ) : null}
         </div>
 

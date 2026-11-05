@@ -15,7 +15,7 @@
 import { all } from "./db";
 import { resolveDrivechains } from "./config";
 import { checkStore, logStoreProblem, type UnavailableReason } from "./store-check";
-import { loadActivation } from "./store";
+import { activationCheck, loadActivation } from "./store";
 import {
   replayTreasuryHistory,
   type TreasuryOutputRow,
@@ -39,6 +39,12 @@ export interface ActivityEvent {
   amountSats: number;
   /** deposit/withdrawal: the transaction that moved the treasury, when known. */
   txid?: string;
+  /**
+   * False for a BMM commitment to a slot that wasn't activated at that height
+   * (no effect on L1; left out of the dashboard's figures). Always true for
+   * deposits and withdrawals, which only exist for activated slots.
+   */
+  activated: boolean;
 }
 
 export type ActivityResult =
@@ -74,6 +80,7 @@ export function getRecentActivity(limit: number = DEFAULT_ACTIVITY_LIMIT): Activ
   const minHeight =
     all<{ m: number | null }>("SELECT MIN(height) AS m FROM blocks")[0]?.m ?? Infinity;
   const { activated } = loadActivation(tipHeight, minHeight);
+  const isActivatedAt = activationCheck(activated);
   const { history } = replayTreasuryHistory(
     all<TreasuryOutputRow>(
       `SELECT height, tx_index AS txIndex, txid, vout, slot, value_sats AS valueSats
@@ -130,6 +137,7 @@ export function getRecentActivity(limit: number = DEFAULT_ACTIVITY_LIMIT): Activ
       name: chains.get(r.slot)!.name,
       color: chains.get(r.slot)!.color,
       amountSats: r.fee,
+      activated: isActivatedAt(r.slot, r.height),
     })),
     ...recentFlows.flatMap((f): ActivityEvent[] => {
       const b = blockInfo.get(f.height);
@@ -145,6 +153,7 @@ export function getRecentActivity(limit: number = DEFAULT_ACTIVITY_LIMIT): Activ
           name: chains.get(f.slot)!.name,
           color: chains.get(f.slot)!.color,
           amountSats: f.amount,
+          activated: true,
           ...(f.txid ? { txid: f.txid } : {}),
         },
       ];

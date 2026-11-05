@@ -108,6 +108,31 @@ test("the page labels saved data as saved mainnet data, with height and time", a
   assert.doesNotMatch(html, /Data temporarily unavailable/);
 });
 
+test("merge-mining before activation is shown only when it happens, outside the figures", async () => {
+  seedValid();
+  let html = await renderHome();
+  assert.doesNotMatch(html, /Merge-mining before activation/, "hidden when empty");
+  assert.doesNotMatch(html, /not activated/);
+
+  // A commitment to slot 77, which isn't activated.
+  run(
+    "INSERT INTO commitments (height, slot, hstar, fee_sats) VALUES (?, ?, ?, ?)",
+    983_000,
+    77,
+    "cd".repeat(32),
+    9_999,
+  );
+  html = await renderHome();
+  assert.match(html, /Merge-mining before activation/);
+  assert.match(html, /slot 77/);
+  assert.match(html, /not activated/, "the activity feed tags it");
+  const d = await loadDashboard(env());
+  assert.ok(d.kind === "saved");
+  if (d.kind !== "saved") return;
+  assert.equal(d.data.grandTotalFeesSats, 564, "its fee isn't counted");
+  assert.ok(!d.data.stats.some((s) => s.chain.slot === 77));
+});
+
 // ── Node offline ─────────────────────────────────────────────────────────────
 
 test("saved data is served with the node offline — the site never calls it", async () => {
