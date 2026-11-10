@@ -15,6 +15,9 @@ www.example.com {
 example.com {
 	encode zstd gzip
 
+	# The site never uses Next.js image optimization, so keep that endpoint closed.
+	respond /_next/image* 404
+
 	reverse_proxy 127.0.0.1:3000
 
 	header {
