@@ -10,12 +10,15 @@
 // malformed is ignored, never turned into a (slot=NaN, hstar="") commitment.
 // Counting valid commitments per slot gives real, live per-drivechain BMM activity.
 //
-// FEES: a drivechain pays L1 via the fee on the BMM *request* tx that commits
-// that h*. We attribute a fee by finding a non-coinbase tx whose OP_RETURN embeds
-// a coinbase h*, then charging ONLY that transaction's own fee to that slot — the
-// individual bid's fee, never the block's aggregate fee pool. Each BMM request tx
-// in a block is priced and attributed independently; hstar is always a full
-// 32-byte hash here, so we never match an empty/partial string.
+// FEES: a drivechain pays L1 via the fee on its BIP 301 BMM *request* tx (M8),
+// whose FIRST output must be exactly:
+//   script hex = 6a 44 00bf00 <slot:1 byte> <hStar:32 bytes> <prevBlock:32 bytes>
+//   (prevBlock in internal byte order, i.e. reversed from the displayed hash)
+// This is the enforcer's own parse (bip300301_enforcer lib/messages.rs,
+// M8BmmRequest / parse_m8_tx). We charge a request's fee to its slot only when
+// its slot and h* match a coinbase commitment and its prevBlock is this block's
+// parent — BIP 301's validity rules. That is the individual bid's fee, never the
+// block's aggregate fee pool.
 //
 // Verified against real chain data: a live block with 7 coinbase commitments
 // (slots 2, 8, 9, 13, 98, 99, 255) matched exactly one paid bid tx per
@@ -40,6 +43,14 @@ export const BMM_PREFIX = "6a25d1617368"; // 6a=OP_RETURN 25=push37 d1617368=tag
  */
 export const BMM_COMMITMENT_RE = /^6a25d1617368([0-9a-f]{2})([0-9a-f]{64})$/i;
 
+/** Strict BIP 301 BMM request (M8) script: tag, slot, h*, previous block, nothing else. */
+export const BMM_REQUEST_RE = /^6a4400bf00([0-9a-f]{2})([0-9a-f]{64})([0-9a-f]{64})$/i;
+
+/** A display-order block hash in the internal byte order an M8 carries. */
+function reverseHashHex(hash: string): string {
+  return Buffer.from(hash, "hex").reverse().toString("hex");
+}
+
 /**
  * BIP 300 sidechain treasury output (the "CTIP"): every deposit and withdrawal
  * spends the slot's current treasury output and creates its successor, whose
@@ -62,6 +73,9 @@ export const TREASURY_SCRIPT_RE = /^b701([0-9a-f]{2})51$/i;
  *   3 = strict commitment parsing + hardened fee attribution
  *   4 = also records sidechain treasury outputs and their spends
  *   5 = also records BIP 300 sidechain proposals (M1) and acks (M2) (current)
+ *
+ * Moving fee matching from "any OP_RETURN containing h*" to an explicit M8 parse
+ * did not bump this: all 289 stored commitments (tip 983,298) came out identical.
  *
  * ⚠ A bump forces a FULL rebuild from the ECX fork. The production node is
  * pruned and loses fork-era blocks after a few months, so the rebuild may have
@@ -268,26 +282,22 @@ export function parseBlock(b: RawBlock): ParsedBlock {
     }
   }
 
-  // Fee attribution: each non-coinbase tx whose OP_RETURN embeds a coinbase h* is a
-  // paid BMM bid. Charge ONLY that tx's own fee to the slot(s) it commits — every
-  // bid priced independently, never the block's aggregate fee pool. hstar is always
-  // a full 32-byte hash, so an empty/partial string can never match. A single BMM
-  // request normally commits exactly one slot; if one somehow commits several, its
-  // fee is split evenly so the total attributed can never exceed the fee it paid.
+  // Fee attribution: a non-coinbase tx whose first output is an M8 for a coinbase
+  // commitment is a paid BMM bid. Charge ONLY that tx's own fee to that slot.
   if (commitments.length > 0 && Array.isArray(b.tx)) {
+    const prevBlock =
+      typeof b.previousblockhash === "string"
+        ? reverseHashHex(b.previousblockhash)
+        : null;
     for (const tx of b.tx.slice(1)) {
-      if (!tx || !Array.isArray(tx.vout)) continue;
-      const matched = new Set<ParsedCommitment>();
-      for (const v of tx.vout) {
-        const hex = v?.scriptPubKey?.hex;
-        if (typeof hex !== "string" || !hex.startsWith("6a")) continue;
-        for (const c of commitments) {
-          if (hex.includes(c.hstar)) matched.add(c);
-        }
-      }
-      if (matched.size === 0) continue;
-      const share = Math.floor(txFeeSats(tx) / matched.size);
-      for (const c of matched) c.feeSats += share;
+      const hex = tx?.vout?.[0]?.scriptPubKey?.hex;
+      if (typeof hex !== "string") continue;
+      const m = BMM_REQUEST_RE.exec(hex);
+      if (!m || (prevBlock != null && m[3].toLowerCase() !== prevBlock)) continue;
+      const slot = parseInt(m[1], 16);
+      const hstar = m[2].toLowerCase();
+      const accepted = commitments.find((c) => c.slot === slot && c.hstar === hstar);
+      if (accepted) accepted.feeSats += txFeeSats(tx);
     }
   }
 

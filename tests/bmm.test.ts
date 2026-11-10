@@ -16,9 +16,11 @@ const HB = "bb".repeat(32);
 function commitVout(slotHex: string, hstar: string) {
   return { scriptPubKey: { hex: BMM_PREFIX + slotHex + hstar }, value: 0 };
 }
-/** A non-coinbase OP_RETURN vout embedding `hstar` (BMM request shape). */
-function opReturn(hstar: string) {
-  return { scriptPubKey: { hex: "6a20" + hstar }, value: 0 };
+const PREV_INTERNAL = "cd".repeat(31) + "ef";
+const PREV_DISPLAY = "ef" + "cd".repeat(31);
+/** A BIP 301 BMM request (M8) output for `slot` and `hstar`. */
+function bid(slotHex: string, hstar: string, prev = PREV_INTERNAL) {
+  return { scriptPubKey: { hex: "6a4400bf00" + slotHex + hstar + prev }, value: 0 };
 }
 function block(tx: RawTx[]): RawBlock {
   return { height: 100, hash: "h", time: 1_700_000_000, tx };
@@ -74,23 +76,46 @@ test("valid commitment still receives the correct fee", () => {
   const p = parseBlock(
     block([
       { vout: [commitVout("02", HA)] },
-      { fee: 0.00002, vout: [opReturn(HA)] }, // 2000 sats
+      { fee: 0.00002, vout: [bid("02", HA)] }, // 2000 sats
     ]),
   );
   assert.equal(p.commitments[0].feeSats, 2000);
 });
 
-test("one tx matching multiple commitments cannot attribute more than its own fee", () => {
+test("two bids in one block are each charged to their own slot", () => {
   const p = parseBlock(
     block([
       { vout: [commitVout("02", HA), commitVout("04", HB)] },
-      // A single tx that (unusually) embeds BOTH h* values. Fee = 3000 sats.
-      { fee: 0.00003, vout: [opReturn(HA), opReturn(HB)] },
+      { fee: 0.00002, vout: [bid("02", HA)] },
+      { fee: 0.00003, vout: [bid("04", HB)] },
     ]),
   );
-  const total = p.commitments.reduce((s, c) => s + c.feeSats, 0);
-  assert.ok(total <= 3000, `attributed ${total} must not exceed the 3000-sat tx fee`);
-  assert.equal(p.commitments.length, 2);
+  assert.deepEqual(p.commitments.map((c) => c.feeSats), [2000, 3000]);
+});
+
+test("the previous-block field must be this block's parent, byte-reversed", () => {
+  const withParent = (tx: RawTx[]): RawBlock => ({ ...block(tx), previousblockhash: PREV_DISPLAY });
+  const cb = { vout: [commitVout("02", HA)] };
+  const good = parseBlock(withParent([cb, { fee: 0.00002, vout: [bid("02", HA)] }]));
+  assert.equal(good.commitments[0].feeSats, 2000);
+  const stale = parseBlock(
+    withParent([cb, { fee: 0.00002, vout: [bid("02", HA, "11".repeat(32))] }]),
+  );
+  assert.equal(stale.commitments[0].feeSats, 0);
+});
+
+test("only a well-formed M8 in the first output counts as a bid", () => {
+  const cb = { vout: [commitVout("02", HA)] };
+  const notABid: RawTx["vout"][] = [
+    [{ scriptPubKey: { hex: "6a20" + HA }, value: 0 }], // merely embeds h*
+    [{ scriptPubKey: { hex: "76a914" + "33".repeat(20) + "88ac" }, value: 0 }, bid("02", HA)], // output 1
+    [bid("04", HA)], // h* matches, slot doesn't
+    [{ scriptPubKey: { hex: bid("02", HA).scriptPubKey.hex + "00" }, value: 0 }], // trailing byte
+  ];
+  for (const vout of notABid) {
+    const p = parseBlock(block([cb, { fee: 0.00002, vout }]));
+    assert.equal(p.commitments[0].feeSats, 0);
+  }
 });
 
 test("txFeeSats handles missing/negative/non-finite fee safely", () => {

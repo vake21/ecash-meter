@@ -4,9 +4,9 @@ Everything runs on one box: the eCash node, the indexer, the Next.js app, and
 Caddy for TLS. Target domain: **example.com**.
 
 > **Status.** The unit files, Caddy config, hardening and app deployment steps
-> below were verified end to end on a real box. The **eCash mainnet node steps
-> (3 and 5) have not been** — the previous deployment ran a different, far
-> smaller chain. Treat the disk sizing as carefully reasoned but unproven.
+> below were verified end to end on a real box, including a pruned eCash mainnet
+> node (steps 3 and 5) on 2 vCPU / 4 GB / 80 GB. That box runs with blocks at the
+> `prune=40000` cap, a 16 GB chainstate and about 9 GB of disk free.
 >
 > One thing that WAS since verified against a real eCash node
 > (`ecash-v1.2.0-core32.1`): `getblock <hash> 3` supplies per-transaction `fee`
@@ -548,7 +548,9 @@ ls -l /var/lib/ecashmeter/backups/
 Point an uptime monitor at `/api/health` and alert on non-200. It returns 503
 when the newest indexed block is older than `STALE_AFTER_SEC` (30 min), which
 catches a wedged indexer — a plain homepage check would not, because the page
-renders happily from stale data.
+renders happily from stale data. The age is measured from the newest block's
+own timestamp, and ECX has gone hours between blocks, so a brief 503 can just be
+a slow chain: alert when it persists, or read `ageSec` with a threshold of hours.
 
 **Redeploy:**
 

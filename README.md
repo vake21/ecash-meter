@@ -47,8 +47,7 @@ store to reach back to each slot's activation; if it doesn't, the balance shows 
 
 The headline metric follows the data: **estimated fees to L1** whenever the window
 contains a paid BMM bid, falling back to **BMM commitment count** when commitments exist
-but none paid a fee. Fees are an estimate because of how bids are matched — see
-*Fee attribution* below.
+but none paid a fee. See *Fee attribution* below for how bids are matched.
 
 ## What the dashboard shows
 
@@ -221,28 +220,16 @@ After that, rebuild on a machine with an unpruned ECX node and upload the file, 
 daily backups of the server's store — see "Backups" and "Rebuilding after a parser change"
 in [deploy/README.md](deploy/README.md#backups).
 
-## Fee attribution: current method and its limits
+## Fee attribution
 
-Fees are attributed by matching a coinbase BMM commitment (`h*`) to a non-coinbase
-transaction whose `OP_RETURN` output **contains that 32-byte `h*`**, then charging
-only that transaction's own fee to the committed slot (`lib/bmm.ts`).
+Each drivechain's L1 fees are the fees on its BIP 301 BMM requests (M8). A
+non-coinbase transaction counts as a bid only when its **first output** is exactly
+`OP_RETURN 00bf00 <slot> <h*> <previous block>`, the same parse the BIP 300/301
+enforcer uses, and when its slot and `h*` match a coinbase BMM commitment and its
+previous-block field is the block's real parent. Only that transaction's own fee is
+charged to the slot (`lib/bmm.ts`), never the block's aggregate fee pool.
 
-This is a **heuristic**, not a full parse of a protocol-defined BMM-request format:
-
-- **Guaranteed safe bounds (tested):** `h*` is always a complete 32-byte value, so a
-  truncated/empty commitment can never match; each transaction's fee is attributed
-  once and split across any slots it commits, so **the total attributed from a
-  transaction never exceeds the fee it actually paid**.
-- **Known limitation:** it matches *any* `OP_RETURN` that embeds the 32-byte
-  sequence, which is broader than parsing an authoritative BMM-request tag + field
-  layout. The method has been checked against real chain data — a block with seven
-  coinbase commitments matched exactly one paid bid each, attributing their individual
-  fees (6 × 564 sats, 1 × 378 sats) rather than the block's aggregate pool — but
-  **before presenting this as authoritative fee accounting**, the canonical BIP 301
-  BMM-request transaction format should be verified against protocol sources and
-  parsed explicitly.
-- If that verification changes how historical data is interpreted, bump
-  `PARSER_VERSION` (`lib/bmm.ts`) and rebuild the derived cache (see above).
+A bid with no matching coinbase commitment in its block is not counted.
 
 ## Configuration
 
