@@ -1,7 +1,7 @@
 # eCash Meter
 
 A dashboard that tracks how each BIP 300/301 **drivechain** (sidechain) uses the
-**eCash (ECX)** mainchain: its blind-merged-mining (BMM) activity, the estimated fees it
+**eCash (ECX)** mainchain: its blind-merged-mining (BMM) activity, the fees it
 feeds to L1 miners, how much ECX it holds on L1, the deposits and withdrawals moving that
 balance, and which new sidechains are collecting miner votes to activate.
 
@@ -45,7 +45,7 @@ rule the enforcer applies, so look-alike outputs can't inflate a balance. This n
 store to reach back to each slot's activation; if it doesn't, the balance shows as
 "unknown" rather than a wrong number.
 
-The headline metric follows the data: **estimated fees to L1** whenever the window
+The headline metric follows the data: **fees to L1** whenever the window
 contains a paid BMM bid, falling back to **BMM commitment count** when commitments exist
 but none paid a fee. See *Fee attribution* below for how bids are matched.
 
@@ -56,14 +56,14 @@ but none paid a fee. See *Fee attribution* below for how bids are matched.
   share columns. It's a plain `?window=7` / `?window=30` link, so a view can be
   bookmarked. While the stored history is shorter than the chosen window, the page says
   how many days it has. Current balances and pending proposals don't depend on it.
-- **Summary cards** — estimated fees over the window and the last 24h, how many
+- **Summary cards** — fees over the window and the last 24h, how many
   drivechains are merge-mining out of how many are activated, and the top contributor.
-- **Four daily charts in one horizontally scrolling row** — estimated fees to L1, BMM
+- **Four daily charts in one horizontally scrolling row** — fees to L1, BMM
   blocks, ECX held (each sidechain's balance at the end of the day), and deposits
   (above the line) and withdrawals (below). Same dates, same colour per sidechain, one
   shared legend.
 - **Activated Drivechains** — a table of every activated slot, **ordered by ECX held**
-  and re-sorted as balances change, with BMM blocks, estimated fees and share.
+  and re-sorted as balances change, with BMM blocks, fees and share.
 - **Recent activity** — a live feed of the latest BMM blocks (with each bid), deposits
   and withdrawals, newest first. It is rendered with the page and then checks
   `/api/activity` every 30 seconds (pausing while the tab is hidden), highlighting new

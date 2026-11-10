@@ -17,7 +17,7 @@ const COPY: Record<
   { aria: string; caption: string; emptyTitle: string; emptyBody: string }
 > = {
   fees: {
-    aria: "Daily estimated drivechain fees to L1",
+    aria: "Daily drivechain fees to L1",
     caption: "Fees paid to L1 miners each day",
     emptyTitle: "No BMM commitments were found in the indexed window.",
     emptyBody: "The indexer has blocks, but none carried drivechain commitments over",
