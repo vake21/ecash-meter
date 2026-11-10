@@ -43,6 +43,8 @@ class FakeChain {
   extraCoinbase = new Map<number, RawTx["vout"]>();
   /** Make verbosity-1 getblock fail, as a pruned node does for old blocks. */
   pruned = false;
+  /** Extra getblockchaininfo fields, to model a node that is still syncing. */
+  chainInfo: Record<string, unknown> = {};
 
   constructor(len: number, tag = "base", startAbove = F) {
     this.segments = [{ from: 0, tag }];
@@ -103,7 +105,7 @@ class FakeChain {
   ): Promise<T> => {
     switch (method) {
       case "getblockchaininfo":
-        return { chain: "main" } as T; // ECX reports "main", exactly like Bitcoin
+        return { chain: "main", ...this.chainInfo } as T; // ECX reports "main", exactly like Bitcoin
       case "getblockcount":
         return this.tipHeight as T;
       case "getblockhash":
@@ -209,6 +211,37 @@ test("node tip lower than stored tip: prune, don't claim up-to-date", async () =
   assert.equal(res.reorgDepth, 2); // F+4, F+5 removed
   assert.equal(res.blocksInserted, 0);
   assert.deepEqual(dbHeights(), [F + 1, F + 2, F + 3]);
+});
+
+test("node still syncing behind the store: refuse and delete nothing", async () => {
+  const chain = new FakeChain(5);
+  await run(chain.rpc, 5);
+  chain.truncate(F + 3);
+  chain.chainInfo = { initialblockdownload: true, blocks: F + 3, headers: F + 3 };
+  const res = await run(chain.rpc, 5);
+  assert.equal(res.status, "refused");
+  assert.equal(res.reason, "node-syncing");
+  assert.equal(dbHeights().length, 5);
+});
+
+test("node with headers ahead of its blocks behind the store: refuse and delete nothing", async () => {
+  const chain = new FakeChain(5);
+  await run(chain.rpc, 5);
+  chain.truncate(F + 3);
+  chain.chainInfo = { initialblockdownload: false, blocks: F + 3, headers: F + 90 };
+  const res = await run(chain.rpc, 5);
+  assert.equal(res.reason, "node-syncing");
+  assert.equal(dbHeights().length, 5);
+});
+
+test("a syncing node that is ahead of the store still indexes", async () => {
+  const chain = new FakeChain(5);
+  await run(chain.rpc, 5);
+  chain.extend(2);
+  chain.chainInfo = { initialblockdownload: true, blocks: F + 7, headers: F + 90 };
+  const res = await run(chain.rpc, 5);
+  assert.equal(res.status, "ok");
+  assert.equal(dbHeights().length, 7);
 });
 
 test("node is not on ECX: refuse on the fork-block hash", async () => {

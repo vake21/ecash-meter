@@ -47,7 +47,8 @@ export type RefusalReason =
   | "network-mismatch"
   | "unverifiable-history"
   | "parser-version"
-  | "deep-reorg";
+  | "deep-reorg"
+  | "node-syncing";
 
 /** The network this indexer will index, and nothing else. */
 const NETWORK = "ecx";
@@ -366,6 +367,27 @@ export async function runIndexer(deps: IndexerDeps): Promise<IndexerResult> {
   for (let attempt = 1; ; attempt++) {
     const { hasData, localTip, minLocal } = readSummary();
     const nodeTip = await rpc<number>("getblockcount");
+
+    // A node still syncing can sit past the fork but behind the store. That looks
+    // exactly like a reorg, and reconciling would delete every stored block above
+    // the node's height — history a pruned node may never be able to restore.
+    if (hasData && nodeTip < localTip!) {
+      const info = await rpc<{
+        initialblockdownload?: boolean;
+        blocks?: number;
+        headers?: number;
+      }>("getblockchaininfo");
+      if (info.initialblockdownload === true || (info.headers ?? 0) > (info.blocks ?? 0)) {
+        return {
+          status: "refused",
+          reason: "node-syncing",
+          message:
+            `[index] node is still syncing (height ${nodeTip}) and behind the stored tip ` +
+            `${localTip}.\n` +
+            `        Nothing was changed. Indexing will resume once the node has caught up.`,
+        };
+      }
+    }
 
     let commonAncestor: number;
     let ancestorHash: string | null;
