@@ -202,7 +202,6 @@ ECASH_RPC_URL=http://127.0.0.1:8532          # 18302 under BitWindow
 ECASH_RPC_USER=$(cut -d: -f1  "$D/.cookie")  # literally __cookie__
 ECASH_RPC_PASS=$(cut -d: -f2- "$D/.cookie")
 ECASH_BACKFILL_BLOCKS=1000000                # clamps to the fork; must reach it
-ECASH_INDEX_CHUNK=100                        # smaller chunks on a laptop
 ```
 
 **The cookie rotates on every node restart**, so if you restart the node
@@ -460,7 +459,7 @@ journalctl -u ecashmeter-index -n 20 --no-pager -o cat
 
 The first run backfills from the fork (the floor clamps to 973,728) in chunks of
 `ECASH_INDEX_CHUNK`, logging `indexed to N of M`. These are real mainnet blocks
-at verbosity 3 — a few hundred MB of JSON per chunk — so budget **tens of
+at verbosity 3, so each block's JSON is large — budget **tens of
 minutes**, not the sub-second runs a tiny chain gives. If it refuses with a
 chain-identity or parser-version message, it is telling you exactly what to fix.
 

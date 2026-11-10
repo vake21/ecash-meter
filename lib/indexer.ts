@@ -37,7 +37,7 @@ export interface IndexerDeps {
   /** First-run backfill depth (blocks). Defaults from env, else 432. */
   backfill?: number;
   concurrency?: number;
-  /** Blocks fetched + committed per transaction. Defaults from env, else 250. */
+  /** Blocks fetched + committed per transaction. Defaults from env, else 20. */
   chunkSize?: number;
   /** How many times to restart reconciliation if the chain moves mid-download. */
   maxReorgRetries?: number;
@@ -263,7 +263,7 @@ export async function runIndexer(deps: IndexerDeps): Promise<IndexerResult> {
   );
   const chunkSize = Math.max(
     1,
-    deps.chunkSize ?? Number(process.env.ECASH_INDEX_CHUNK ?? 250),
+    deps.chunkSize ?? Number(process.env.ECASH_INDEX_CHUNK ?? 20),
   );
   const maxRetries = deps.maxReorgRetries ?? 3;
 

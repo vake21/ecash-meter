@@ -192,7 +192,7 @@ job to keep the store up to date:
 npm run index   # safe to run repeatedly; only fetches new blocks
 ```
 
-A deep first run is committed in bounded chunks (`ECASH_INDEX_CHUNK`, default 250 blocks)
+A deep first run is committed in bounded chunks (`ECASH_INDEX_CHUNK`, default 20 blocks)
 rather than one batch: real mainnet blocks carry thousands of transactions and verbosity-3
 `getblock` embeds every input's prevout, so the whole range will not fit in memory at
 once. Chunks commit in ascending order, so the store is always a valid contiguous prefix
@@ -254,7 +254,7 @@ All settings live in `.env.local` (see `.env.example` for the full list). Key on
 | `ECASH_DEMO` | `1` = show labelled sample data instead of the store. Development only |
 | `ECASH_RPC_URL` / `ECASH_RPC_USER` / `ECASH_RPC_PASS` | Indexer only: the ECX mainnet node's JSON-RPC |
 | `ECASH_BACKFILL_BLOCKS` | Indexer only: blocks to backfill on the first run (clamps to the ECX fork; set it large enough to reach the fork) |
-| `ECASH_INDEX_CHUNK` | Indexer only: blocks fetched + committed per transaction (default 250) |
+| `ECASH_INDEX_CHUNK` | Indexer only: blocks fetched + committed per transaction (default 20) |
 | `ECASH_RPC_TIMEOUT_MS` | Indexer only: per-request RPC timeout. Raise it (e.g. 120000) for long backfills — a node flushing its cache can stall RPC for tens of seconds |
 | `ECASH_RPC_CONCURRENCY` | Indexer only: parallel RPC requests (default 8; keep below the node's `rpcthreads`) |
 | `ECASH_BACKUP_DIR` / `ECASH_BACKUP_KEEP` | Backup script only: where `deploy/backup-db.mjs` writes snapshots, and how many daily ones to keep (default 14) |
